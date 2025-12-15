@@ -133,6 +133,11 @@ export const activityApi = {
     const response = await api.post('/api/v1/agents/activity/redeploy', data);
     return response.data;
   },
+
+  getVersions: async (activityId: string) => {
+    const response = await api.get(`/api/v1/content/versions/activity/${activityId}`);
+    return response.data;
+  },
   
   chat: async (data: {
     activity_id: string;

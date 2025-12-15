@@ -3,11 +3,14 @@ TutorPilot FastAPI Backend - WaveHacks 2
 Self-Improving AI Tutoring Platform
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import weave
 import os
+from typing import Optional, Dict, Any, List
+from datetime import datetime, timedelta
+from collections import defaultdict
 from dotenv import load_dotenv
 import asyncio
 
@@ -17,8 +20,21 @@ load_dotenv()
 # Initialize Weave for tracing
 weave.init(os.getenv("WEAVE_PROJECT_NAME", "tutorpilot-weavehacks"))
 
-# Import services (will create these next)
-# from services.learning_service import start_reflection_loop
+# Import services
+from services.auth_service import (
+    auth_service, 
+    get_current_user, 
+    get_optional_user,
+    AuthenticatedUser,
+    SignUpRequest, 
+    SignInRequest, 
+    ResetPasswordRequest
+)
+from services.student_service import (
+    student_service,
+    CreateStudentRequest,
+    UpdateStudentRequest
+)
 
 
 @asynccontextmanager
@@ -27,15 +43,12 @@ async def lifespan(app: FastAPI):
     # Startup
     print("🚀 TutorPilot backend starting...")
     print(f"📊 Weave tracing enabled: {os.getenv('WEAVE_PROJECT_NAME')}")
-    
-    # Start background reflection loop
-    # reflection_task = asyncio.create_task(start_reflection_loop())
+    print(f"🔐 Auth enabled: Supabase")
     
     yield
     
     # Shutdown
     print("👋 TutorPilot backend shutting down...")
-    # reflection_task.cancel()
 
 
 app = FastAPI(
@@ -48,7 +61,11 @@ app = FastAPI(
 # CORS middleware for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],  # Next.js default ports
+    allow_origins=[
+        "http://localhost:3000", 
+        "http://localhost:3001",
+        os.getenv("FRONTEND_URL", "http://localhost:3000")
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -77,7 +94,106 @@ async def health_check():
 
 
 # ==========================================
-# DATA API ENDPOINTS (for dropdowns)
+# AUTHENTICATION ENDPOINTS
+# ==========================================
+
+@app.post("/api/v1/auth/signup")
+async def signup(request: SignUpRequest):
+    """Register a new user (tutor)"""
+    return await auth_service.sign_up(request)
+
+
+@app.post("/api/v1/auth/signin")
+async def signin(request: SignInRequest):
+    """Sign in an existing user"""
+    return await auth_service.sign_in(request)
+
+
+@app.post("/api/v1/auth/signout")
+async def signout(user: AuthenticatedUser = Depends(get_current_user)):
+    """Sign out the current user"""
+    return await auth_service.sign_out("")
+
+
+@app.post("/api/v1/auth/reset-password")
+async def reset_password(request: ResetPasswordRequest):
+    """Request password reset email"""
+    return await auth_service.reset_password(request)
+
+
+@app.post("/api/v1/auth/refresh")
+async def refresh_session(refresh_token: str):
+    """Refresh access token"""
+    return await auth_service.refresh_session(refresh_token)
+
+
+@app.get("/api/v1/auth/me")
+async def get_current_user_profile(user: AuthenticatedUser = Depends(get_current_user)):
+    """Get current user profile"""
+    return await auth_service.get_user_profile(user)
+
+
+# ==========================================
+# STUDENT MANAGEMENT ENDPOINTS (Protected)
+# ==========================================
+
+@app.post("/api/v1/students")
+async def create_student(
+    request: CreateStudentRequest,
+    user: AuthenticatedUser = Depends(get_current_user)
+):
+    """Create a new student for the authenticated tutor"""
+    tutor_id = user.tutor_id or user.id
+    return await student_service.create_student(tutor_id, request)
+
+
+@app.get("/api/v1/students")
+async def get_my_students(user: AuthenticatedUser = Depends(get_current_user)):
+    """Get all students for the authenticated tutor"""
+    tutor_id = user.tutor_id or user.id
+    return await student_service.get_students(tutor_id)
+
+
+@app.get("/api/v1/students/{student_id}")
+async def get_student_detail(
+    student_id: str,
+    user: AuthenticatedUser = Depends(get_current_user)
+):
+    """Get a specific student (ownership check)"""
+    tutor_id = user.tutor_id or user.id
+    return await student_service.get_student(student_id, tutor_id)
+
+
+@app.put("/api/v1/students/{student_id}")
+async def update_student(
+    student_id: str,
+    request: UpdateStudentRequest,
+    user: AuthenticatedUser = Depends(get_current_user)
+):
+    """Update a student"""
+    tutor_id = user.tutor_id or user.id
+    return await student_service.update_student(student_id, tutor_id, request)
+
+
+@app.delete("/api/v1/students/{student_id}")
+async def delete_student(
+    student_id: str,
+    user: AuthenticatedUser = Depends(get_current_user)
+):
+    """Delete a student"""
+    tutor_id = user.tutor_id or user.id
+    return await student_service.delete_student(student_id, tutor_id)
+
+
+@app.get("/api/v1/students/stats/overview")
+async def get_students_stats(user: AuthenticatedUser = Depends(get_current_user)):
+    """Get statistics for all students"""
+    tutor_id = user.tutor_id or user.id
+    return await student_service.get_student_stats(tutor_id)
+
+
+# ==========================================
+# DATA API ENDPOINTS (for dropdowns - public for now)
 # ==========================================
 
 # ==========================================
@@ -108,9 +224,9 @@ async def trigger_reflection_analysis(agent_type: str = None):
                 "insights": insights
             }
         else:
-            # Analyze all agents
+            # Analyze all agents (use canonical agent_type names used in performance metrics)
             all_insights = {}
-            for agent in ['strategy_creator', 'lesson_creator', 'activity_creator']:
+            for agent in ['strategy_planner', 'lesson_creator', 'activity_creator']:
                 insights = await reflection_service.generate_learning_insights(
                     agent_type=agent,
                     lookback_days=7
@@ -147,7 +263,194 @@ async def get_learning_insights(agent_type: str):
         return {
             "success": True,
             "agent_type": agent_type,
-            "insights": insights
+            "insights": insights or []
+        }
+    except Exception as e:
+        # Return empty insights on error instead of 500
+        print(f"Error getting insights for {agent_type}: {str(e)}")
+        return {
+            "success": True,
+            "agent_type": agent_type,
+            "insights": []
+        }
+
+
+# ==========================================
+# ANALYTICS ENDPOINTS (public for now)
+# ==========================================
+
+@app.get("/api/v1/analytics/agent-metrics")
+async def analytics_agent_metrics(days: int = 30):
+    """
+    Aggregate agent performance metrics for the last N days.
+    Returns per-agent totals, average overall score, and a simple improvement trend.
+    """
+    try:
+        cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
+        rows = supabase.table('agent_performance_metrics')\
+            .select('agent_type, evaluation_details, created_at')\
+            .gte('created_at', cutoff_date)\
+            .order('created_at', desc=False)\
+            .execute()
+
+        data = rows.data if rows.data else []
+        by_agent = defaultdict(list)
+        for r in data:
+            by_agent[r.get('agent_type', 'unknown')].append(r)
+
+        metrics = []
+        for agent_type, items in by_agent.items():
+            scores: List[float] = []
+            for it in items:
+                eval_details = it.get('evaluation_details') or {}
+                score = eval_details.get('overall_score')
+                if isinstance(score, (int, float)):
+                    scores.append(float(score))
+
+            total = len(items)
+            avg_score = (sum(scores) / len(scores)) if scores else 0.0
+
+            # Trend = compare last 5 avg vs previous 5 avg (percentage)
+            recent = scores[-5:]
+            prev = scores[-10:-5]
+            recent_avg = sum(recent) / len(recent) if recent else 0.0
+            prev_avg = sum(prev) / len(prev) if prev else 0.0
+            trend_pct = ((recent_avg - prev_avg) / prev_avg) * 100.0 if prev_avg > 0 else 0.0
+
+            metrics.append({
+                "agent_type": agent_type,
+                "avg_score": avg_score,
+                "total_generations": total,
+                "improvement_trend": trend_pct,
+            })
+
+        metrics.sort(key=lambda m: m["agent_type"])
+        return {"success": True, "days": days, "metrics": metrics}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/analytics/agent-scores")
+async def analytics_agent_scores(days: int = 30):
+    """
+    Daily averages of overall score per agent for the last N days.
+    """
+    try:
+        cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
+        rows = supabase.table('agent_performance_metrics')\
+            .select('agent_type, evaluation_details, created_at')\
+            .gte('created_at', cutoff_date)\
+            .order('created_at', desc=False)\
+            .execute()
+
+        data = rows.data if rows.data else []
+        buckets = defaultdict(lambda: defaultdict(list))  # agent -> day -> scores
+
+        for r in data:
+            agent_type = r.get('agent_type', 'unknown')
+            created_at = r.get('created_at') or ''
+            day = created_at[:10] if len(created_at) >= 10 else 'unknown'
+            eval_details = r.get('evaluation_details') or {}
+            score = eval_details.get('overall_score')
+            if isinstance(score, (int, float)):
+                buckets[agent_type][day].append(float(score))
+
+        series = {}
+        for agent_type, days_map in buckets.items():
+            points = []
+            for day, scores in sorted(days_map.items(), key=lambda x: x[0]):
+                points.append({
+                    "date": day,
+                    "avg_score": sum(scores) / len(scores) if scores else 0.0,
+                    "count": len(scores),
+                })
+            series[agent_type] = points
+
+        return {"success": True, "days": days, "series": series}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/library")
+async def get_content_library(
+    tutor_id: Optional[str] = None,
+    content_type: Optional[str] = None,
+    search: Optional[str] = None,
+    limit: int = 50
+):
+    """
+    Get unified content library (strategies, lessons, activities) for the tutor.
+    Supports filtering by content_type and search query.
+    """
+    try:
+        items = []
+
+        # Fetch strategies
+        if not content_type or content_type == 'strategy':
+            query = supabase.table('strategies')\
+                .select('id, title, content, student_id, tutor_id, created_at')
+            if tutor_id:
+                query = query.eq('tutor_id', tutor_id)
+            strategies = query.order('created_at', desc=True).limit(limit).execute()
+            for s in (strategies.data or []):
+                if search and search.lower() not in (s.get('title') or '').lower():
+                    continue
+                items.append({
+                    'id': s['id'],
+                    'title': s.get('title') or 'Untitled Strategy',
+                    'type': 'strategy',
+                    'student_id': s.get('student_id'),
+                    'created_at': s.get('created_at'),
+                    'preview': (s.get('content', {}).get('overview') or '')[:120]
+                })
+
+        # Fetch lessons
+        if not content_type or content_type == 'lesson':
+            query = supabase.table('lessons')\
+                .select('id, title, topic, student_id, tutor_id, created_at')
+            if tutor_id:
+                query = query.eq('tutor_id', tutor_id)
+            lessons = query.order('created_at', desc=True).limit(limit).execute()
+            for l in (lessons.data or []):
+                if search and search.lower() not in (l.get('title') or l.get('topic') or '').lower():
+                    continue
+                items.append({
+                    'id': l['id'],
+                    'title': l.get('title') or l.get('topic') or 'Untitled Lesson',
+                    'type': 'lesson',
+                    'student_id': l.get('student_id'),
+                    'created_at': l.get('created_at'),
+                    'preview': l.get('topic', '')[:120]
+                })
+
+        # Fetch activities
+        if not content_type or content_type == 'activity':
+            query = supabase.table('activities')\
+                .select('id, title, type, student_id, tutor_id, created_at, sandbox_url')
+            if tutor_id:
+                query = query.eq('tutor_id', tutor_id)
+            activities = query.order('created_at', desc=True).limit(limit).execute()
+            for a in (activities.data or []):
+                if search and search.lower() not in (a.get('title') or '').lower():
+                    continue
+                items.append({
+                    'id': a['id'],
+                    'title': a.get('title') or 'Untitled Activity',
+                    'type': 'activity',
+                    'activity_type': a.get('type'),
+                    'student_id': a.get('student_id'),
+                    'created_at': a.get('created_at'),
+                    'sandbox_url': a.get('sandbox_url'),
+                    'preview': f"Type: {a.get('type', 'interactive')}"
+                })
+
+        # Sort all items by created_at descending
+        items.sort(key=lambda x: x.get('created_at') or '', reverse=True)
+
+        return {
+            "success": True,
+            "items": items[:limit],
+            "total": len(items)
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -239,7 +542,6 @@ from agents.strategy_planner import generate_strategy
 from agents.lesson_creator import generate_lesson
 from agents.activity_creator import generate_activity
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
 from db.supabase_client import supabase
 
 # Request models
@@ -298,6 +600,7 @@ async def create_strategy(request: StrategyRequest):
             "strategy_id": result['strategy_id'],
             "content": result['content'],
             "evaluation": result['evaluation'],
+            "sources": result.get('sources', []),
             "student": result['student'],
             "tutor": result['tutor']
         }

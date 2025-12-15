@@ -27,7 +27,7 @@ class ReflectionService:
         Analyze recent agent performance and generate insights
         
         Args:
-            agent_type: 'strategy_creator', 'lesson_creator', or 'activity_creator'
+            agent_type: 'strategy_planner', 'lesson_creator', or 'activity_creator'
             lookback_days: How many days of data to analyze
             
         Returns:
@@ -177,7 +177,8 @@ Return ONLY valid JSON:
         
         lines = []
         for i, metric in enumerate(metrics[:10]):  # Top 10
-            eval_data = metric.get('evaluation', {})
+            # Stored as 'evaluation_details' by memory_service.store_performance_metric
+            eval_data = metric.get('evaluation_details', {}) or metric.get('evaluation', {})
             score = eval_data.get('overall_score', 0)
             criteria = eval_data.get('criteria', {})
             
@@ -193,7 +194,10 @@ Return ONLY valid JSON:
             )
         
         # Calculate averages
-        scores = [m.get('evaluation', {}).get('overall_score', 0) for m in metrics]
+        scores = [
+            (m.get('evaluation_details', {}) or m.get('evaluation', {}) or {}).get('overall_score', 0)
+            for m in metrics
+        ]
         avg_score = sum(scores) / len(scores) if scores else 0
         
         lines.append(f"\nAverage Score: {avg_score:.2f}/10")
@@ -217,6 +221,7 @@ Return ONLY valid JSON:
         """Map agent type to content type"""
         mapping = {
             'strategy_creator': 'strategy',
+            'strategy_planner': 'strategy',
             'lesson_creator': 'lesson',
             'activity_creator': 'activity'
         }
@@ -232,20 +237,23 @@ Return ONLY valid JSON:
         Retrieve most relevant learning insights for this agent
         To be prepended to prompts for adaptive generation
         """
-        result = supabase.table('cross_agent_learning')\
-            .select('*')\
-            .or_(f'source_agent.eq.{agent_type},target_agent.eq.{agent_type}')\
-            .order('confidence', desc=True)\
-            .order('created_at', desc=True)\
-            .limit(max_insights)\
-            .execute()
-        
-        insights = result.data if result.data else []
-        
-        if insights:
-            print(f"   🎓 Retrieved {len(insights)} learning insights for {agent_type}")
-        
-        return insights
+        try:
+            result = supabase.table('cross_agent_learning')\
+                .select('*')\
+                .or_(f'source_agent.eq.{agent_type},target_agent.eq.{agent_type}')\
+                .order('created_at', desc=True)\
+                .limit(max_insights)\
+                .execute()
+            
+            insights = result.data if result.data else []
+            
+            if insights:
+                print(f"   🎓 Retrieved {len(insights)} learning insights for {agent_type}")
+            
+            return insights
+        except Exception as e:
+            print(f"   ⚠️  Failed to retrieve insights: {str(e)}")
+            return []
 
 
 # Global instance

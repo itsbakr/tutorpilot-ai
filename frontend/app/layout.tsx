@@ -1,12 +1,13 @@
 import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
 import './globals.css';
+import { AuthProvider } from '@/lib/auth-context';
+import { ToastProvider } from '@/components/ui/Toast';
 
-const inter = Inter({
-  subsets: ['latin'],
-  variable: '--font-inter',
-  display: 'swap',
-});
+export const metadata: Metadata = {
+  title: 'TutorPilot - AI-Powered Tutoring Platform',
+  description: 'Self-Improving AI Tutoring Platform - Create personalized learning strategies, lessons, and interactive activities',
+  keywords: ['AI tutoring', 'education', 'personalized learning', 'lesson planning', 'interactive activities'],
+};
 
 export default function RootLayout({
   children,
@@ -15,13 +16,20 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${inter.variable} antialiased`}>{children}</body>
+      <head>
+        <link rel="preconnect" href="https://fonts.cdnfonts.com" />
+        <link 
+          href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" 
+          rel="stylesheet" 
+        />
+      </head>
+      <body className="antialiased">
+        <AuthProvider>
+          <ToastProvider>
+          {children}
+          </ToastProvider>
+        </AuthProvider>
+      </body>
     </html>
   );
 }
-
-// Metadata export at the end to satisfy fast refresh
-export const metadata: Metadata = {
-  title: 'TutorPilot - WaveHacks 2',
-  description: 'Self-Improving AI Tutoring Platform for WaveHacks 2 Hackathon',
-};

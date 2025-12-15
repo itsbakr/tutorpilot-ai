@@ -54,6 +54,11 @@ export interface StrategyResponse {
   strategy_id: string;
   content: StrategyContent;
   evaluation: SelfEvaluation;
+  sources?: Array<{
+    title: string;
+    url: string;
+    snippet?: string;
+  }>;
   student: Record<string, unknown>;
   tutor: Record<string, unknown>;
 }

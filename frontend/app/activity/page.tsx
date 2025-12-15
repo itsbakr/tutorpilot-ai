@@ -1,14 +1,33 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import Link from 'next/link';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { AppShell } from '@/components/AppShell';
 import { activityApi, dataApi } from '@/lib/api';
 import { SelfEvaluationCard } from '@/components/SelfEvaluationCard';
 import { SandboxPreview } from '@/components/SandboxPreview';
 import { ActivityChat } from '@/components/ActivityChat';
 import { ContentGallery } from '@/components/ContentGallery';
-import { Loader2, Activity, ArrowLeft, Sparkles, ChevronDown, MessageSquare } from 'lucide-react';
-import Link from 'next/link';
+import { GlassCard } from '@/components/ui/GlassCard';
+import { Button } from '@/components/ui/Button';
+import { Input, Select, Textarea } from '@/components/ui/Input';
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+import { useToast } from '@/components/ui/Toast';
+import { useAuth } from '@/lib/auth-context';
+import { supabase } from '@/lib/supabase';
 import type { ActivityResponse, SelfEvaluation } from '@/lib/types';
+import {
+  ArrowLeftIcon,
+  ArrowPathIcon,
+  BoltIcon,
+  CheckCircleIcon,
+  ChevronRightIcon,
+  CommandLineIcon,
+  LinkIcon,
+  PuzzlePieceIcon,
+  SparklesIcon,
+} from '@heroicons/react/24/outline';
 
 interface Student {
   id: string;
@@ -30,6 +49,10 @@ interface Lesson {
 }
 
 export default function ActivityPage() {
+  const searchParams = useSearchParams();
+  const toast = useToast();
+  const { user } = useAuth();
+
   const [loading, setLoading] = useState(false);
   const [loadingData, setLoadingData] = useState(true);
   const [students, setStudents] = useState<Student[]>([]);
@@ -43,6 +66,7 @@ export default function ActivityPage() {
   const [pastActivities, setPastActivities] = useState<any[]>([]);
   const [loadingActivities, setLoadingActivities] = useState(false);
   const [redeployingActivity, setRedeployingActivity] = useState<string | null>(null);
+  const [progressStep, setProgressStep] = useState(0);
   const [formData, setFormData] = useState({
     student_id: '',
     tutor_id: '',
@@ -67,12 +91,77 @@ export default function ActivityPage() {
         setTutors(tutorsRes.tutors || []);
       } catch (error) {
         console.error('Failed to load data:', error);
+        toast.error('Failed to load data', 'Please try again.');
       } finally {
         setLoadingData(false);
       }
     };
     loadData();
   }, []);
+
+  // Prefill student from URL: /activity?student=<uuid>
+  useEffect(() => {
+    const studentFromUrl = searchParams.get('student') || '';
+    if (studentFromUrl) {
+      setFormData((p) => ({ ...p, student_id: studentFromUrl }));
+    }
+  }, [searchParams]);
+
+  // Load an existing activity by id: /activity?id=<uuid>
+  useEffect(() => {
+    const idFromUrl = searchParams.get('id') || '';
+    if (!idFromUrl) return;
+
+    const run = async () => {
+      try {
+        const { data, error } = await supabase.from('activities').select('*').eq('id', idFromUrl).single();
+        if (error) throw error;
+
+        const content = (data as any).content || {};
+        const sandbox = (data as any).sandbox_url || '';
+
+        setActivity({
+          activity_id: (data as any).id,
+          content,
+          evaluation: (data as any).self_evaluation,
+          deployment: { status: (data as any).deployment_status },
+          sandbox_url: sandbox,
+        } as any);
+
+        setEvaluation(((data as any).self_evaluation || null) as any);
+        setCode(content?.code || '');
+        setSandboxUrl(sandbox);
+        setProgressStep(5);
+
+        setFormData((p) => ({
+          ...p,
+          student_id: (data as any).student_id || p.student_id,
+          tutor_id: (data as any).tutor_id || p.tutor_id,
+          duration: (data as any).duration ?? p.duration,
+          use_lesson: !!(data as any).lesson_id,
+          lesson_id: (data as any).lesson_id || p.lesson_id,
+          lesson_phase: (data as any).lesson_phase || p.lesson_phase,
+          topic: (data as any).topic || p.topic,
+        }));
+
+        toast.info('Loaded activity', 'You are viewing an existing activity.');
+      } catch (err: any) {
+        toast.error('Could not load activity', err?.message || 'Please try again.');
+      }
+    };
+
+    run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  // Default tutor selection from auth metadata
+  useEffect(() => {
+    const tutorId = (user?.tutor_id || user?.id) ?? '';
+    if (tutorId && !formData.tutor_id) {
+      setFormData((p) => ({ ...p, tutor_id: tutorId }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   // Load lessons when student selected
   useEffect(() => {
@@ -119,8 +208,14 @@ export default function ActivityPage() {
     setEvaluation(null);
     setCode('');
     setSandboxUrl('');
+    setProgressStep(0);
 
+    let interval: number | undefined;
     try {
+      interval = window.setInterval(() => {
+        setProgressStep((s) => (s < 4 ? s + 1 : s));
+      }, 1200);
+
       const requestData = {
         student_id: formData.student_id,
         tutor_id: formData.tutor_id,
@@ -145,10 +240,13 @@ export default function ActivityPage() {
       setEvaluation(response.evaluation);
       setCode(response.content?.code || '');
       setSandboxUrl(response.sandbox_url || '');
+      setProgressStep(5);
+      toast.success('Activity generated', 'Sandbox is deploying. Preview below when ready.');
     } catch (error) {
       console.error('Failed to create activity:', error);
-      alert('Failed to create activity. Make sure the backend is running!');
+      toast.error('Generation failed', 'Make sure the backend is running and try again.');
     } finally {
+      if (interval) window.clearInterval(interval);
       setLoading(false);
     }
   };
@@ -156,7 +254,7 @@ export default function ActivityPage() {
   const handlePreviewActivity = async (activityItem: any) => {
     // Redeploy activity from gallery
     if (!formData.student_id) {
-      alert('Please select a student first.');
+      toast.warning('Select a student', 'Pick a student before previewing an activity.');
       return;
     }
 
@@ -188,10 +286,10 @@ export default function ActivityPage() {
       // Scroll to preview
       window.scrollTo({ top: 400, behavior: 'smooth' });
       
-      alert('✅ Activity redeployed successfully! Sandbox is building...');
+      toast.success('Activity redeployed', 'Sandbox is building…');
     } catch (error) {
       console.error('Failed to redeploy activity:', error);
-      alert('❌ Failed to redeploy activity. Please try again.');
+      toast.error('Redeploy failed', 'Please try again.');
     } finally {
       setRedeployingActivity(null);
     }
@@ -199,7 +297,7 @@ export default function ActivityPage() {
 
   const handleRetryDeployment = async () => {
     if (!activity?.activity_id || !formData.student_id) {
-      alert('No activity to redeploy.');
+      toast.warning('Nothing to redeploy', 'Generate or select an activity first.');
       return;
     }
 
@@ -221,10 +319,10 @@ export default function ActivityPage() {
         sandbox_url: response.sandbox_url,
       });
       
-      alert('✅ Redeployment successful! Check the preview below.');
+      toast.success('Redeployed', 'Check the preview below.');
     } catch (error) {
       console.error('Failed to retry deployment:', error);
-      alert('❌ Retry failed. Please check the backend logs.');
+      toast.error('Retry failed', 'Please check the backend logs.');
     } finally {
       setLoading(false);
     }
@@ -246,359 +344,314 @@ export default function ActivityPage() {
     { name: 'Homework' }
   ];
 
+  const studentOptions = useMemo(
+    () => students.map((s) => ({ value: s.id, label: `${s.name} — Grade ${s.grade}` })),
+    [students]
+  );
+
+  const tutorOptions = useMemo(
+    () => tutors.map((t) => ({ value: t.id, label: t.name })),
+    [tutors]
+  );
+
+  const lessonOptions = useMemo(
+    () => lessons.map((l) => ({ value: l.id, label: l.title })),
+    [lessons]
+  );
+
+  const phaseOptions = useMemo(
+    () => lessonPhases.map((p) => ({ value: p.name, label: p.name })),
+    [lessonPhases]
+  );
+
+  const progressItems = [
+    { title: 'Reuse research', subtitle: 'Loading context (lesson → activity handoff)' },
+    { title: 'Design UX', subtitle: 'Defining interactions and game loop' },
+    { title: 'Generate code', subtitle: 'Creating a React app' },
+    { title: 'Deploy', subtitle: 'Building the sandbox environment' },
+    { title: 'Validate', subtitle: `Auto-fixing up to ${formData.max_attempts} attempt(s)` },
+  ];
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-orange-50 via-white to-red-50">
-      {/* Modern Header */}
-      <header className="bg-white/80 backdrop-blur-md border-b border-gray-100 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <Link
-                href="/"
-                className="text-gray-600 hover:text-gray-900 flex items-center gap-2 transition-colors"
-              >
-                <ArrowLeft className="w-5 h-5" />
-                <span className="font-medium">Back</span>
-              </Link>
-              <div className="h-8 w-px bg-gray-200" />
-              <div className="flex items-center gap-3">
-                <div className="bg-red-600 p-2 rounded-xl shadow-lg">
-                  <Activity className="w-5 h-5 text-white" />
-                </div>
-                <div>
-                  <h1 className="text-xl font-bold text-gray-900">Activity Creator</h1>
-                  <p className="text-xs text-gray-500">Generate interactive React activities</p>
-                </div>
+    <AppShell>
+      <div className="max-w-7xl mx-auto space-y-6">
+        {/* Page header */}
+        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center">
+                <PuzzlePieceIcon className="w-5 h-5 text-primary" />
               </div>
+              <h1 className="text-2xl font-bold text-foreground">Activity Creator</h1>
             </div>
+            <p className="text-[var(--foreground-muted)] mt-1">
+              Generate an interactive React activity, deploy it, then iterate via chat.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Link href="/dashboard">
+              <Button variant="secondary" leftIcon={<ArrowLeftIcon className="w-4 h-4" />}>
+                Back
+              </Button>
+            </Link>
+            {sandboxUrl && (
+              <a href={sandboxUrl} target="_blank" rel="noopener noreferrer">
+                <Button variant="gradient" rightIcon={<ChevronRightIcon className="w-4 h-4" />}>
+                  Open Sandbox
+                </Button>
+              </a>
+            )}
           </div>
         </div>
-      </header>
 
-      <div className="max-w-5xl mx-auto px-6 py-12">
-        {/* Form Card */}
-        <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-8 mb-8">
+        {/* Form */}
+        <GlassCard padding="lg">
           <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Student & Tutor Selection */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Select Student
-                </label>
-                <div className="relative">
-                  <select
-                    value={formData.student_id}
-                    onChange={(e) => setFormData({ ...formData, student_id: e.target.value })}
-                    disabled={loadingData}
-                    className="w-full px-4 py-3.5 pr-10 border-2 border-gray-200 rounded-xl focus:outline-none focus:border-red-500 appearance-none bg-white text-gray-900 font-medium transition-colors cursor-pointer disabled:bg-gray-50"
-                    required
-                  >
-                    <option value="">Choose a student...</option>
-                    {students.map((student) => (
-                      <option key={student.id} value={student.id}>
-                        {student.name} - Grade {student.grade}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Select Tutor
-                </label>
-                <div className="relative">
-                  <select
-                    value={formData.tutor_id}
-                    onChange={(e) => setFormData({ ...formData, tutor_id: e.target.value })}
-                    disabled={loadingData}
-                    className="w-full px-4 py-3.5 pr-10 border-2 border-gray-200 rounded-xl focus:outline-none focus:border-red-500 appearance-none bg-white text-gray-900 font-medium transition-colors cursor-pointer disabled:bg-gray-50"
-                    required
-                  >
-                    <option value="">Choose a tutor...</option>
-                    {tutors.map((tutor) => (
-                      <option key={tutor.id} value={tutor.id}>
-                        {tutor.name}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
-                </div>
-              </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Select
+                label="Student"
+                options={studentOptions}
+                placeholder={loadingData ? 'Loading students…' : 'Choose a student…'}
+                value={formData.student_id}
+                onChange={(e) => setFormData((p) => ({ ...p, student_id: e.target.value }))}
+                disabled={loadingData}
+                required
+              />
+              <Select
+                label="Tutor"
+                options={tutorOptions}
+                placeholder={loadingData ? 'Loading tutors…' : 'Choose a tutor…'}
+                value={formData.tutor_id}
+                onChange={(e) => setFormData((p) => ({ ...p, tutor_id: e.target.value }))}
+                disabled={loadingData}
+                required
+              />
             </div>
 
-            {/* Duration & Max Attempts */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Duration (minutes)
-                </label>
-                <input
-                  type="number"
-                  value={formData.duration}
-                  onChange={(e) => setFormData({ ...formData, duration: parseInt(e.target.value) })}
-                  min="5"
-                  max="60"
-                  className="w-full px-4 py-3.5 border-2 border-gray-200 rounded-xl focus:outline-none focus:border-red-500 bg-white text-gray-900 font-medium transition-colors"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Auto-Debug Attempts
-                </label>
-                <input
-                  type="number"
-                  value={formData.max_attempts}
-                  onChange={(e) =>
-                    setFormData({ ...formData, max_attempts: parseInt(e.target.value) })
-                  }
-                  min="1"
-                  max="5"
-                  className="w-full px-4 py-3.5 border-2 border-gray-200 rounded-xl focus:outline-none focus:border-red-500 bg-white text-gray-900 font-medium transition-colors"
-                />
-              </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Input
+                label="Duration (minutes)"
+                type="number"
+                min={5}
+                max={60}
+                value={formData.duration}
+                onChange={(e) => setFormData((p) => ({ ...p, duration: parseInt(e.target.value || '20', 10) }))}
+              />
+              <Input
+                label="Auto-debug attempts"
+                type="number"
+                min={1}
+                max={5}
+                value={formData.max_attempts}
+                onChange={(e) => setFormData((p) => ({ ...p, max_attempts: parseInt(e.target.value || '1', 10) }))}
+                hint="Higher attempts can take longer but may improve deploy success."
+              />
             </div>
 
-            {/* Agent Handoff Section */}
-            <div className="border-t-2 border-gray-100 pt-6">
-              <div className="flex items-center gap-3 mb-4">
-                <input
-                  type="checkbox"
-                  id="use_lesson"
-                  checked={formData.use_lesson}
-                  onChange={(e) => setFormData({ ...formData, use_lesson: e.target.checked })}
-                  className="w-5 h-5 text-red-600 border-2 border-gray-300 rounded focus:ring-red-500 cursor-pointer"
-                />
-                <label htmlFor="use_lesson" className="text-base font-bold text-gray-900 cursor-pointer">
-                  🔗 Create from Lesson (Agent Handoff - Reuses Lesson's Research!)
+            {/* Agent handoff */}
+            <div className="pt-2">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-2">
+                  <LinkIcon className="w-5 h-5 text-primary" />
+                  <p className="font-semibold text-foreground">Agent Handoff</p>
+                </div>
+                <label className="inline-flex items-center gap-2 text-sm font-medium text-foreground cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={formData.use_lesson}
+                    onChange={(e) => setFormData((p) => ({ ...p, use_lesson: e.target.checked }))}
+                    className="w-4 h-4 rounded border-[var(--card-border)] text-primary focus:ring-primary"
+                  />
+                  Create from lesson
                 </label>
               </div>
 
               {formData.use_lesson ? (
-                <div className="space-y-4 bg-red-50 p-6 rounded-2xl border-2 border-red-200">
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      Select Lesson
-                    </label>
-                    <div className="relative">
-                      <select
-                        value={formData.lesson_id}
-                        onChange={(e) => setFormData({ ...formData, lesson_id: e.target.value })}
-                        className="w-full px-4 py-3.5 pr-10 border-2 border-red-300 rounded-xl focus:outline-none focus:border-red-500 appearance-none bg-white text-gray-900 font-medium transition-colors cursor-pointer"
-                        required={formData.use_lesson}
-                        disabled={!formData.student_id || lessons.length === 0}
-                      >
-                        <option value="">
-                          {!formData.student_id
-                            ? 'Select a student first...'
-                            : lessons.length === 0
-                            ? 'No lessons found for this student'
-                            : 'Choose a lesson...'}
-                        </option>
-                        {lessons.map((lesson) => (
-                          <option key={lesson.id} value={lesson.id}>
-                            {lesson.title}
-                          </option>
-                        ))}
-                      </select>
-                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
-                    </div>
-                  </div>
-
-                  {selectedLesson && lessonPhases.length > 0 && (
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-2">
-                        Select Class Section (Optional)
-                      </label>
-                      <div className="relative">
-                        <select
-                          value={formData.lesson_phase}
-                          onChange={(e) => setFormData({ ...formData, lesson_phase: e.target.value })}
-                          className="w-full px-4 py-3.5 pr-10 border-2 border-red-300 rounded-xl focus:outline-none focus:border-red-500 appearance-none bg-white text-gray-900 font-medium transition-colors cursor-pointer"
-                        >
-                          <option value="">General activity from lesson...</option>
-                          {lessonPhases.map((phase, index) => (
-                            <option key={index} value={phase.name}>
-                              {phase.name}
-                            </option>
-                          ))}
-                        </select>
-                        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
+                <div className="mt-4 space-y-4">
+                  <GlassCard variant="small" padding="md" className="bg-primary/5 border-primary/20">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-foreground">Lesson → Activity</p>
+                        <p className="text-xs text-[var(--foreground-muted)]">
+                          Reuses the lesson’s context to reduce redundant research.
+                        </p>
                       </div>
-                      <p className="text-xs text-red-700 mt-2">
-                        ✨ Select a specific class activity section, or leave empty for general activity
-                      </p>
+                      <span className="badge badge-primary">Handoff</span>
                     </div>
-                  )}
-                </div>
-              ) : (
-                <div className="bg-gray-50 p-6 rounded-2xl border-2 border-gray-200 space-y-4">
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      Topic (Standalone Activity)
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.topic}
-                      onChange={(e) => setFormData({ ...formData, topic: e.target.value })}
-                      placeholder="e.g., Chemical Bonding"
-                      className="w-full px-4 py-3.5 border-2 border-gray-300 rounded-xl focus:outline-none focus:border-red-500 bg-white text-gray-900 font-medium transition-colors"
-                      required={!formData.use_lesson}
-                    />
-                  </div>
+                    {selectedLesson && (
+                      <div className="mt-4 p-4 rounded-xl bg-white border border-[var(--card-border)]">
+                        <p className="text-sm font-semibold text-foreground line-clamp-2">{selectedLesson.title}</p>
+                        {formData.lesson_phase && (
+                          <p className="text-xs text-[var(--foreground-muted)] mt-1">{formData.lesson_phase}</p>
+                        )}
+                      </div>
+                    )}
+                  </GlassCard>
 
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                      <MessageSquare className="w-4 h-4 text-red-600" />
-                      Describe Your Activity (Chat-First!)
-                    </label>
-                    <textarea
-                      value={formData.activity_description}
-                      onChange={(e) =>
-                        setFormData({ ...formData, activity_description: e.target.value })
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <Select
+                      label="Lesson"
+                      options={lessonOptions}
+                      placeholder={
+                        !formData.student_id
+                          ? 'Select a student first…'
+                          : lessons.length === 0
+                          ? 'No lessons found'
+                          : 'Choose a lesson…'
                       }
-                      placeholder="e.g., Build molecules by drag-and-dropping atoms together. Make it game-like with challenges and rewards!"
-                      rows={4}
-                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:outline-none focus:border-red-500 bg-white text-gray-900 transition-colors resize-none"
-                      required={!formData.use_lesson}
+                      value={formData.lesson_id}
+                      onChange={(e) => setFormData((p) => ({ ...p, lesson_id: e.target.value }))}
+                      disabled={!formData.student_id || lessons.length === 0}
+                      required
                     />
-                    <p className="text-xs text-gray-600 mt-2">
-                      💬 Describe exactly what you want - the AI will generate it!
-                    </p>
+                    <Select
+                      label="Lesson section (optional)"
+                      options={phaseOptions}
+                      placeholder={!selectedLesson ? 'Select a lesson first…' : 'General activity…'}
+                      value={formData.lesson_phase}
+                      onChange={(e) => setFormData((p) => ({ ...p, lesson_phase: e.target.value }))}
+                      disabled={!selectedLesson}
+                    />
                   </div>
+                </div>
+              ) : (
+                <div className="mt-4 space-y-4">
+                  <Input
+                    label="Topic"
+                    value={formData.topic}
+                    onChange={(e) => setFormData((p) => ({ ...p, topic: e.target.value }))}
+                    placeholder="e.g., Chemical Bonding"
+                    required
+                  />
+                  <Textarea
+                    label="Describe your activity"
+                    value={formData.activity_description}
+                    onChange={(e) => setFormData((p) => ({ ...p, activity_description: e.target.value }))}
+                    placeholder="Describe gameplay, UI, scoring, constraints…"
+                    rows={4}
+                    required
+                  />
                 </div>
               )}
             </div>
 
-            {/* Submit Button */}
-            <button
+            <Button
               type="submit"
+              variant="gradient"
+              size="lg"
+              fullWidth
+              loading={loading}
+              rightIcon={loading ? undefined : <SparklesIcon className="w-5 h-5" />}
               disabled={loading || loadingData}
-              className="w-full px-8 py-4 bg-red-600 text-white font-bold rounded-xl hover:bg-red-700 hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3 transition-all duration-200 hover:scale-[1.02]"
             >
-              {loading ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  Generating Activity (~3-4 min)...
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-5 h-5" />
-                  Generate Interactive Activity
-                </>
-              )}
-            </button>
+              Generate Activity
+            </Button>
           </form>
-        </div>
+        </GlassCard>
 
-        {/* Loading State */}
+        {/* Loading / progress */}
         {loading && (
-          <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-12 text-center">
-            <div className="w-20 h-20 bg-red-600 rounded-full mx-auto mb-6 flex items-center justify-center animate-pulse">
-              <Loader2 className="w-10 h-10 text-white animate-spin" />
+          <GlassCard padding="lg">
+            <div className="flex items-center gap-3 mb-5">
+              <div className="w-12 h-12 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center">
+                <LoadingSpinner size="md" color="primary" />
+              </div>
+              <div>
+                <p className="text-lg font-bold text-foreground">Generating activity…</p>
+                <p className="text-sm text-[var(--foreground-muted)]">This can take a few minutes.</p>
+              </div>
             </div>
-            <h3 className="text-2xl font-bold text-gray-900 mb-4">
-              Generating Your Activity...
-            </h3>
-            <div className="space-y-3 text-sm text-gray-600 max-w-md mx-auto">
-              <p className="flex items-center justify-center gap-2">
-                <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-                Retrieving knowledge from Perplexity
-              </p>
-              <p className="flex items-center justify-center gap-2">
-                <span className="w-2 h-2 bg-orange-500 rounded-full animate-pulse animation-delay-200" />
-                Generating React code with Qwen3 Coder 480B
-              </p>
-              <p className="flex items-center justify-center gap-2">
-                <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse animation-delay-400" />
-                Deploying to Daytona sandbox
-              </p>
-              <p className="flex items-center justify-center gap-2">
-                <span className="w-2 h-2 bg-purple-500 rounded-full animate-pulse animation-delay-600" />
-                Auto-fixing errors (up to {formData.max_attempts} attempts)
-              </p>
+
+            <div className="space-y-3">
+              {progressItems.map((step, idx) => {
+                const done = progressStep > idx;
+                const active = progressStep === idx;
+                return (
+                  <div
+                    key={step.title}
+                    className={`flex items-center justify-between p-4 rounded-2xl border transition-colors ${
+                      done
+                        ? 'bg-[var(--success-bg)] border-[var(--success)]/20'
+                        : active
+                        ? 'bg-primary/5 border-primary/20'
+                        : 'bg-[var(--background-secondary)] border-[var(--card-border)]'
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <p className="font-semibold text-foreground">{step.title}</p>
+                      <p className="text-sm text-[var(--foreground-muted)]">{step.subtitle}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {done ? (
+                        <CheckCircleIcon className="w-5 h-5 text-[var(--success)]" />
+                      ) : active ? (
+                        <LoadingSpinner size="sm" color="primary" />
+                      ) : (
+                        <ArrowPathIcon className="w-5 h-5 text-[var(--foreground-muted)]" />
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-          </div>
+          </GlassCard>
         )}
 
         {/* Results */}
         {activity && !loading && (
-          <>
+          <div className="space-y-6">
             <SandboxPreview
               code={code}
               sandboxUrl={sandboxUrl}
               status={activity.deployment?.status}
               attempts={activity.deployment?.attempts}
               isRebuilding={!!redeployingActivity}
-              rebuildMessage={redeployingActivity ? 'Redeploying activity from gallery...' : 'Rebuilding sandbox...'}
+              rebuildMessage={redeployingActivity ? 'Redeploying activity from gallery…' : 'Rebuilding sandbox…'}
             />
 
-            {/* Retry Button - Show when deployment failed */}
             {activity.deployment?.status === 'failed' && code && (
-              <div className="mt-8 bg-gradient-to-r from-orange-50 to-red-50 rounded-3xl border-2 border-orange-200 p-8 text-center">
-                <div className="flex items-center justify-center gap-3 mb-4">
-                  <div className="w-12 h-12 bg-orange-500 rounded-full flex items-center justify-center">
-                    <span className="text-2xl">⚠️</span>
-                  </div>
-                  <div className="text-left">
-                    <h3 className="text-xl font-bold text-gray-900">Deployment Failed</h3>
-                    <p className="text-sm text-gray-600">
-                      The code was generated but failed to deploy to Daytona after {activity.deployment?.attempts || 3} attempts
+              <GlassCard padding="lg" className="border border-[var(--warning)]/20 bg-[var(--warning-bg)]">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-lg font-bold text-foreground">Deployment failed</p>
+                    <p className="text-sm text-[var(--foreground-muted)]">
+                      The code was generated but didn’t deploy successfully.
                     </p>
                   </div>
+                  <span className="badge badge-warning">Failed</span>
                 </div>
-                <div className="bg-white rounded-xl p-4 mb-6">
-                  <p className="text-sm text-gray-700 mb-2">
-                    <strong>Possible reasons:</strong>
-                  </p>
-                  <ul className="text-sm text-gray-600 text-left list-disc list-inside space-y-1">
-                    <li>Code syntax errors that couldn't be auto-fixed</li>
-                    <li>Daytona API rate limits or service issues</li>
-                    <li>Network connectivity problems</li>
-                    <li>Invalid DAYTONA_API_KEY in backend/.env</li>
-                  </ul>
+                <div className="mt-4 flex flex-col sm:flex-row gap-3">
+                  <Button variant="gradient" onClick={handleRetryDeployment}>
+                    Retry deployment
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      if (code) navigator.clipboard.writeText(code);
+                      toast.success('Copied', 'Activity code copied to clipboard.');
+                    }}
+                  >
+                    Copy code
+                  </Button>
                 </div>
-                <button
-                  onClick={handleRetryDeployment}
-                  disabled={loading}
-                  className="px-8 py-4 bg-gradient-to-r from-orange-600 to-red-600 text-white font-bold rounded-xl hover:shadow-2xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3 mx-auto transition-all duration-200 hover:scale-105"
-                >
-                  {loading ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      Retrying Deployment...
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="w-5 h-5" />
-                      Retry Deployment
-                    </>
-                  )}
-                </button>
-                <p className="text-xs text-gray-500 mt-4">
-                  This will regenerate and deploy the activity with the same parameters
-                </p>
-              </div>
+              </GlassCard>
             )}
 
             {activity.activity_id && code && sandboxUrl && (
-              <div className="mt-8">
-                <ActivityChat
-                  activityId={activity.activity_id}
-                  tutorId={formData.tutor_id}
-                  studentId={formData.student_id}
-                  onCodeUpdate={handleCodeUpdate}
-                />
-              </div>
+              <ActivityChat
+                activityId={activity.activity_id}
+                tutorId={formData.tutor_id}
+                studentId={formData.student_id}
+                onCodeUpdate={handleCodeUpdate}
+              />
             )}
 
             {evaluation && <SelfEvaluationCard evaluation={evaluation} agentName="Activity Creator" />}
-          </>
+          </div>
         )}
 
-        {/* Past Activities Gallery with Preview/Redeploy */}
+        {/* Past activities */}
         {formData.student_id && (
           <ContentGallery
             title="Past Activities"
@@ -606,7 +659,6 @@ export default function ActivityPage() {
             type="activity"
             loading={loadingActivities}
             onItemClick={(item) => {
-              // Load activity details without redeploying
               setActivity({
                 activity_id: item.id,
                 content: item.content || {},
@@ -625,6 +677,6 @@ export default function ActivityPage() {
           />
         )}
       </div>
-    </div>
+    </AppShell>
   );
 }
