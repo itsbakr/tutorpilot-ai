@@ -1,6 +1,6 @@
 # 🎓 TutorPilot AI - Self-Improving Educational Agent System
 
-[![WaveHacks 2025](https://img.shields.io/badge/WaveHacks%202025-Best%20Self--Improving%20Agent-blue)](https://github.com/itsbakr/weave-tutor)
+[![WaveHacks 2025](https://img.shields.io/badge/WaveHacks%202025-Best%20Self--Improving%20Agent-blue)](https://github.com/itsbakr/tutorpilot-ai)
 [![Python](https://img.shields.io/badge/Python-3.12+-green.svg)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109.0-009688.svg)](https://fastapi.tiangolo.com)
 [![Next.js](https://img.shields.io/badge/Next.js-14-black.svg)](https://nextjs.org)
@@ -267,8 +267,8 @@ Every generation is scored on **6 criteria** (1-10 each) with reasoning:
 ### 1. Clone Repository
 
 ```bash
-git clone https://github.com/itsbakr/weave-tutor.git
-cd weave-tutor
+git clone https://github.com/itsbakr/tutorpilot-ai.git
+cd tutorpilot-ai
 ```
 
 ### 2. Database Setup
@@ -457,7 +457,7 @@ python test_agent_handoff.py
 ## 📂 Project Structure
 
 ```
-weave-tutor/
+tutorpilot-ai/
 ├── backend/                      # FastAPI backend
 │   ├── agents/                   # 5 AI agents
 │   │   ├── strategy_planner.py  # 4-week strategies with Perplexity
@@ -515,7 +515,7 @@ weave-tutor/
 **Ahmed Bakr**
 
 - GitHub: [@itsbakr](https://github.com/itsbakr)
-- Portfolio Project: [TutorPilot AI](https://github.com/itsbakr/weave-tutor)
+- Portfolio Project: [TutorPilot AI](https://github.com/itsbakr/tutorpilot-ai)
 - Built for: **WaveHacks 2 2025 - Best Self-Improving Agent Track**
 
 ---
