@@ -1,6 +1,5 @@
-# 🎓 TutorPilot AI - Self-Improving Educational Agent System
+# TutorPilot AI - Self-Improving Educational Agent System
 
-[![WaveHacks 2025](https://img.shields.io/badge/WaveHacks%202025-Best%20Self--Improving%20Agent-blue)](https://github.com/itsbakr/tutorpilot-ai)
 [![Python](https://img.shields.io/badge/Python-3.12+-green.svg)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109.0-009688.svg)](https://fastapi.tiangolo.com)
 [![Next.js](https://img.shields.io/badge/Next.js-14-black.svg)](https://nextjs.org)
@@ -19,9 +18,6 @@
 - [Key Features](#-key-features)
 - [Tech Stack](#%EF%B8%8F-tech-stack)
 - [Quick Start](#-quick-start)
-- [Demo](#-demo)
-- [Self-Improvement Metrics](#-self-improvement-metrics)
-- [What Makes This Stand Out](#-what-makes-this-stand-out)
 - [Project Structure](#-project-structure)
 - [Author](#-author)
 
@@ -37,84 +33,65 @@ TutorPilot isn't just another AI tutoring app—it's an **agent that learns from
 - 📈 **Adapt Prompts** based on accumulated learning insights (reflection loop)
 - 🤝 **Pass Context** between agents hierarchically (Strategy → Lesson → Activity)
 
-### 🏆 Why This Wins "Best Self-Improving Agent"
-
-| Feature | Why It Matters |
-|---------|---------------|
-| **Real-Time Self-Debugging** | Agent fixes its own code errors automatically using Qwen3 Coder |
-| **Hierarchical Agent Handoff** | Context flows intelligently through 3 agents with optimized knowledge reuse |
-| **Multi-Loop Learning** | 4 improvement mechanisms: Self-evaluation + Reflection + Tutor feedback + Auto-debugging |
-| **Demonstrable Progress** | Quantifiable improvement metrics stored in database (7.2 → 8.6 average score) |
-| **Interactive Activities** | Generates full React web pages with Tailwind CSS, deployed to live sandboxes |
-| **Learning from Human Feedback** | Version history + edit notes feed into future prompt adaptations |
-
 ---
 
 ## 🏗️ Architecture Overview
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         NEXT.JS FRONTEND                            │
-│   Modern Duolingo-inspired UI    │
-│                                                                      │
-│   Strategy Page    │    Lesson Page    │    Activity Page          │
-│   (Rich Editor)    │    (Rich Editor)  │    (Chat + Sandbox)       │
-│   + Version History│    + Version History│  + Full-Screen Preview  │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                        FASTAPI BACKEND                               │
-│                                                                      │
-│  ┌─────────────────── AGENT HANDOFF FLOW ──────────────────────┐  │
-│  │                                                               │  │
-│  │   1️⃣ Strategy Planner (LearnLM + Perplexity)                 │  │
-│  │      ↓ passes {strategy_id, week_number, topic, sources}     │  │
-│  │   2️⃣ Lesson Creator (LearnLM + Perplexity)                   │  │
-│  │      ↓ passes {lesson_id, knowledge_context, explanations}   │  │
-│  │   3️⃣ Activity Creator (Qwen3 Coder 480B + Daytona)           │  │
-│  │      ↓ auto-debugging loop (up to 3 attempts)                │  │
-│  │   ✅ Self-Evaluation (6 criteria, weaknesses, improvements)   │  │
-│  │                                                               │  │
-│  └───────────────────────────────────────────────────────────────┘  │
-│                                                                      │
-│  ┌─────────────── SELF-IMPROVEMENT MECHANISMS ───────────────┐    │
-│  │                                                             │    │
-│  │  🔍 Self-Evaluation Loop                                   │    │
-│  │     • Every generation scores itself (6 criteria × 1-10)   │    │
-│  │     • Identifies 3 weaknesses + 3 improvements             │    │
-│  │     • Stores in agent_performance_metrics                  │    │
-│  │                                                             │    │
-│  │  🔧 Auto-Debugging Loop (Activity Creator)                 │    │
-│  │     • Deploy React code to Daytona sandbox                 │    │
-│  │     • Check logs 3× over 15 seconds for errors             │    │
-│  │     • Use Qwen3 Coder to fix errors automatically          │    │
-│  │     • Redeploy fixed code (Gemini fallback if W&B fails)   │    │
-│  │                                                             │    │
-│  │  🧠 Reflection Loop (Background Service)                   │    │
-│  │     • Analyzes low-scoring outputs periodically            │    │
-│  │     • Identifies common failure patterns                   │    │
-│  │     • Generates learning_insights                          │    │
-│  │     • Next generation loads insights → adapts prompts      │    │
-│  │                                                             │    │
-│  │  ✏️ Learning from Edits (Collaborative Canvas)             │    │
-│  │     • Tutors edit content in rich text editor              │    │
-│  │     • Version history tracks WHY edits were made           │    │
-│  │     • Edit notes feed into learning_insights               │    │
-│  │     • Future generations adapt based on feedback           │    │
-│  │                                                             │    │
-│  └─────────────────────────────────────────────────────────────┘    │
-│                                                                      │
-└──────────────────────────────┬───────────────────────────────────────┘
-                               │
-        ┌──────────────────────┼──────────────────────┐
-        │                      │                      │
-        ▼                      ▼                      ▼
-┌───────────────┐    ┌──────────────────┐   ┌─────────────────┐
-│   Supabase    │    │  Weave Tracing   │   │    Daytona      │
-│   PostgreSQL  │    │  + W&B Inference │   │   Sandboxes     │
-│  (12 tables)  │    │  (Qwen3 Coder)   │   │  (React apps)   │
-└───────────────┘    └──────────────────┘   └─────────────────┘
+The system uses a hierarchical agent design. Research flows from top to bottom, minimizing redundant API calls and ensuring pedagogical alignment across all generated content.
+
+```mermaid
+flowchart TD
+    classDef frontend fill:#ffffff,stroke:#e2e8f0,stroke-width:2px,color:#0f172a
+    classDef backend fill:#f8fafc,stroke:#cbd5e1,stroke-width:2px,color:#0f172a
+    classDef agent fill:#fef2f2,stroke:#dc2626,stroke-width:2px,color:#b91c1c
+    classDef db fill:#eff6ff,stroke:#3b82f6,stroke-width:2px,color:#1d4ed8
+    classDef loop fill:#f5f3ff,stroke:#8b5cf6,stroke-width:2px,color:#6d28d9
+
+    %% Frontend Layer
+    subgraph Frontend [Next.js Frontend]
+        UI[Glass-morphism UI]:::frontend
+        RE[Rich Text Editor]:::frontend
+        SB[Daytona Sandbox]:::frontend
+    end
+
+    %% Backend Layer
+    subgraph Backend [FastAPI Backend]
+        %% Agents
+        A1[Strategy Planner\nLearnLM + Perplexity]:::agent
+        A2[Lesson Creator\nLearnLM]:::agent
+        A3[Activity Builder\nQwen3 Coder]:::agent
+
+        %% Context Flow
+        A1 -- "Week context & Sources" --> A2
+        A2 -- "Lesson phase context" --> A3
+
+        %% Improvement Loops
+        SE[Self-Evaluation Loop\nScores 1-10]:::loop
+        RL[Reflection Loop\nGenerates Insights]:::loop
+        AD[Auto-Debug Loop\nMax 3 attempts]:::loop
+
+        A1 -.-> SE
+        A2 -.-> SE
+        A3 -.-> SE
+        
+        SE -.-> RL
+        A3 <--> AD
+    end
+
+    %% Database & Infrastructure
+    subgraph Infrastructure [Data & Execution]
+        DB[(Supabase\nPostgreSQL)]:::db
+        DDaytona[Daytona\nReact Environments]:::db
+        WandB[Weave\nLLM Tracing]:::db
+    end
+
+    %% Connections
+    UI <--> Backend
+    RE -- "Tutor Edit Notes" --> RL
+    Backend <--> DB
+    A3 --> DDaytona
+    DDaytona -- "Error Logs" --> AD
+    Backend -.-> WandB
 ```
 
 ---
@@ -153,8 +130,6 @@ Not just a simple 5E model—generates **production-ready lesson plans**:
 - **Class Activities**: Detailed breakdown with materials (sourced!), durations, teacher notes
 - **Homework**: Practice tasks, creative project, next class prep
 
-**All heavily sourced from Perplexity API with credible URLs!**
-
 ### 3. **Interactive React Activities**
 
 Generates **full React web pages** with Tailwind CSS, not just simple simulations:
@@ -185,8 +160,6 @@ The agent **fixes its own code errors automatically**:
    e. Repeat up to 3 times (Gemini fallback if W&B fails)
 5. SUCCESS: Return live sandbox URL
 ```
-
-**Result**: 85% of activities deploy successfully on attempts 1-2! 🎉
 
 <img width="1204" alt="Activity Generator with Auto-Debugging" src="https://github.com/user-attachments/assets/d5d53ffb-c2ec-4aa3-92da-9c7a82915795" />
 
@@ -220,12 +193,6 @@ Every generation is scored on **6 criteria** (1-10 each) with reasoning:
 
 **Activity Agent:**
 - Educational Value, Engagement, Interactivity, Creativity, Code Quality, Feasibility
-
-**Each criterion includes:**
-- Numeric score (1-10)
-- 1-2 sentence reasoning
-- Overall: 3 weaknesses identified
-- Overall: 3 actionable improvements suggested
 
 ---
 
@@ -267,8 +234,8 @@ Every generation is scored on **6 criteria** (1-10 each) with reasoning:
 ### 1. Clone Repository
 
 ```bash
-git clone https://github.com/itsbakr/tutorpilot-ai.git
-cd tutorpilot-ai
+git clone https://github.com/itsbakr/weave-tutor.git
+cd weave-tutor
 ```
 
 ### 2. Database Setup
@@ -352,112 +319,12 @@ Open **http://localhost:3000** and:
 2. **Lesson Page**: Create a comprehensive lesson from a strategy week
 3. **Activity Page**: Generate an interactive React activity from a lesson phase
 
-Or run the test script:
-```bash
-cd backend
-python test_agent_handoff.py
-```
-
----
-
-## 🎬 Demo
-
-### Full Agent Handoff Flow
-
-1. **Strategy Planner** generates 4-week plan for "Alex Chen - Physics"
-2. **Lesson Creator** uses Week 2 context → auto-fills topic "Forces and Motion"
-3. **Activity Creator** uses lesson context → generates "Projectile Motion Simulator"
-4. **Auto-Debugging** detects missing semicolon → fixes code → redeploys
-5. **Self-Evaluation** scores activity 8.7/10, identifies improvements
-6. **Tutor edits** activity via chat: "Make trajectory arc more visible"
-7. **Agent iterates** code → redeploys with enhanced visualization
-
-### Performance Highlights
-
-- **Average generation time**: 38 seconds (Strategy: 45s, Lesson: 35s, Activity: 28s)
-- **Code deployment success**: 85% on attempts 1-2 (auto-debugging)
-- **Self-evaluation accuracy**: 92% (compared to human tutor ratings)
-- **Learning insights accumulated**: 18 in first 24 hours
-
----
-
-## 📊 Self-Improvement Metrics
-
-### Quantitative Evidence
-
-| Metric | Target | Actual | Evidence |
-|--------|--------|--------|----------|
-| Initial average score | 7.0-7.5/10 | ✅ **7.2/10** | `agent_performance_metrics` table |
-| After 5 generations | 8.5+/10 | ✅ **8.6/10** | Reflection loop adaptations |
-| Learning insights | 15+ in 24h | ✅ **18** | `learning_insights` table |
-| Code deployment success | 80%+ | ✅ **85%** | Daytona deployment logs |
-| Auto-fix success rate | 70%+ | ✅ **78%** | Error recovery tracking |
-| Avg generation time | <45s | ✅ **38s** | Weave tracing data |
-
-### Qualitative Improvements Over Time
-
-- **Generation 1-2**: Basic strategies with generic activities, some syntax errors
-- **Generation 3-5**: More interactive elements, student learning styles considered
-- **Generation 6-8**: Activities auto-align with interests (space themes for Alex)
-- **Generation 9+**: Code quality improves (fewer deployment errors)
-
-### Learning Insights Examples
-
-```sql
--- Example insight generated by reflection service:
-{
-  "insight_type": "pattern_recognition",
-  "description": "Activities for kinesthetic learners (Emma) need 30% more interactive elements",
-  "supporting_evidence": ["activity_abc123", "activity_def456"],
-  "applicability": {"learning_styles": ["Kinesthetic"], "grades": ["9", "10"]},
-  "status": "validated"
-}
-```
-
-**Result**: Next activity for Emma automatically includes more drag-and-drop and hands-on elements!
-
----
-
-## 🎯 What Makes This Stand Out
-
-### 1. **Novel Auto-Debugging Loop**
-- **Only project** that fixes its own code errors in real-time
-- Demonstrates **true self-improvement** (not just memory retrieval)
-- Uses Qwen3 Coder intelligently with Gemini fallback
-
-### 2. **Hierarchical Context Passing**
-- Agents build on each other's work intelligently
-- **60% reduction** in redundant Perplexity API calls
-- Knowledge context flows through 3 agents seamlessly
-
-### 3. **Learning from Human Feedback**
-- Version history + edit notes → learning insights
-- Closes the loop between AI generation and tutor expertise
-- Tutor edits directly improve future generations
-
-### 4. **Demonstrable Progress**
-- Can show improvement over 10+ generations
-- Metrics stored in database (not subjective claims)
-- **7.2 → 8.6 average score** with documented evidence
-
-### 5. **Strong Sponsor Integration**
-- **Weave (W&B)**: Full tracing + W&B Inference for Qwen3 Coder 480B
-- **Daytona**: React sandboxes with auto-debugging + Vite setup
-- **Google Cloud**: LearnLM (Gemini) for educational content
-- **Perplexity**: Real-time research with credible sources
-
-### 6. **Production-Ready Architecture**
-- FastAPI + Next.js (industry standard stack)
-- TypeScript for type safety
-- Proper error handling and retry logic (exponential backoff)
-- Scalable database design with indexes and views
-
 ---
 
 ## 📂 Project Structure
 
 ```
-tutorpilot-ai/
+weave-tutor/
 ├── backend/                      # FastAPI backend
 │   ├── agents/                   # 5 AI agents
 │   │   ├── strategy_planner.py  # 4-week strategies with Perplexity
@@ -474,7 +341,6 @@ tutorpilot-ai/
 │   │   └── supabase_client.py   # Database connection
 │   ├── main.py                   # FastAPI app
 │   ├── requirements.txt
-│   ├── test_agent_handoff.py    # Demo script
 │   └── README.md
 │
 ├── frontend/                     # Next.js frontend
@@ -515,24 +381,7 @@ tutorpilot-ai/
 **Ahmed Bakr**
 
 - GitHub: [@itsbakr](https://github.com/itsbakr)
-- Portfolio Project: [TutorPilot AI](https://github.com/itsbakr/tutorpilot-ai)
-- Built for: **WaveHacks 2 2025 - Best Self-Improving Agent Track**
-
----
-
-## 📝 License
-
-This project is a portfolio/hackathon submission. Feel free to explore the code and architecture!
-
----
-
-## 🙏 Acknowledgments
-
-- **Weights & Biases** for Weave tracing and W&B Inference (Qwen3 Coder 480B)
-- **Daytona** for seamless React sandbox deployment
-- **Google Cloud** for LearnLM (Gemini) educational models
-- **Perplexity** for real-time research capabilities
-- **Supabase** for managed PostgreSQL with real-time features
+- Portfolio Project: [TutorPilot AI](https://github.com/itsbakr/weave-tutor)
 
 ---
 
