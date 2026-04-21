@@ -1,32 +1,29 @@
 # FastAPI Backend
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
-python-dotenv==1.0.0
-pydantic[email]==2.5.3
-pydantic-settings==2.1.0
-email-validator>=2.1.0
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-dotenv>=1.0.0
+pydantic[email]>=2.5.3
+pydantic-settings>=2.1.0
 
-# Database (updated for Python 3.12 compatibility)
-supabase>=2.12.0
-postgrest>=0.18.0
-realtime>=2.0.0
-gotrue>=2.12.0
+# Database
+supabase>=2.3.0
+postgrest>=0.16.0
+realtime>=1.0.0
+gotrue>=2.3.0
 
 # AI Models
-google-generativeai==0.3.2
-openai>=1.52.0  # For W&B Inference (Qwen3 Coder)
+google-generativeai>=0.3.2
+openai>=1.0.0
 
-# Weave Tracing (updated for Python 3.12)
-weave>=0.51.0
-wandb>=0.16.4
+# Weave Tracing
+weave>=0.50.0
+wandb>=0.16.0
 gql>=3.5.0
 
 # Daytona Sandboxes (Official SDK)
-# https://www.daytona.io/docs/
 daytona>=0.1.0
 
 # Utilities
-httpx>=0.25.2
-aiohttp>=3.9.1
+httpx>=0.28.0
+aiohttp>=3.9.0
 python-multipart>=0.0.6
-
