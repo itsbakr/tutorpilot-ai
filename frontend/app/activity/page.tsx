@@ -1,5 +1,7 @@
 'use client';
 
+import { Suspense } from 'react';
+
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
@@ -49,6 +51,14 @@ interface Lesson {
 }
 
 export default function ActivityPage() {
+  return (
+    <Suspense>
+      <ActivityPageInner />
+    </Suspense>
+  );
+}
+
+function ActivityPageInner() {
   const searchParams = useSearchParams();
   const toast = useToast();
   const { user } = useAuth();

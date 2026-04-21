@@ -1,5 +1,7 @@
 'use client';
 
+import { Suspense } from 'react';
+
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
@@ -50,6 +52,14 @@ interface Tutor {
 }
 
 export default function StrategyPage() {
+  return (
+    <Suspense>
+      <StrategyPageInner />
+    </Suspense>
+  );
+}
+
+function StrategyPageInner() {
   const searchParams = useSearchParams();
   const toast = useToast();
   const { user } = useAuth();
