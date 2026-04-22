@@ -14,15 +14,13 @@ import google.generativeai as genai
 # weave.init() is called in main.py
 
 @weave.op()
-async def call_google_learnlm(
+async def call_gemini(
     prompt: str,
     temperature: float = 0.7,
     max_tokens: int = 2000
 ) -> str:
     """
-    Call Google's Gemini model via official SDK (for educational content)
-    
-    Using gemini-2.0-flash-exp or gemini-1.5-pro based on availability
+    Call Google's Gemini 3.0 Flash model via official SDK
     
     Args:
         prompt: The prompt to send
@@ -32,17 +30,15 @@ async def call_google_learnlm(
     Returns:
         Generated text response
     """
-    api_key = os.getenv("GOOGLE_LEARNLM_API_KEY")
+    api_key = os.getenv("GOOGLE_LEARNLM_API_KEY") or os.getenv("GOOGLE_GEMINI_API_KEY")
     if not api_key:
-        raise ValueError("GOOGLE_LEARNLM_API_KEY not set in environment")
+        raise ValueError("GOOGLE_GEMINI_API_KEY not set in environment")
     
     # Configure Google AI with the API key
     genai.configure(api_key=api_key)
     
-    # Use Gemini 2.0 Flash (much faster than LearnLM for hackathon demos)
-    # LearnLM is too slow (~2-3 min per call) for real-time use
-    # Gemini 2.0 Flash is optimized for speed while maintaining quality
-    model = genai.GenerativeModel("gemini-flash-lite-latest")
+    # Use Gemini 3.0 Flash as requested
+    model = genai.GenerativeModel("gemini-3-flash-preview")
     
     # Configure generation
     generation_config = genai.GenerationConfig(
@@ -68,12 +64,16 @@ async def call_google_learnlm(
             if response and response.text:
                 return response.text
             else:
-                raise Exception("No text in LearnLM response")
+                raise Exception("No text in Gemini response")
                 
         except Exception as e:
             error_str = str(e).lower()
             is_last_attempt = attempt == max_retries - 1
             
+            if "401" in str(e) or "unauthorized" in error_str:
+                print(f"⚠️ Perplexity Authentication Error: Check your PERPLEXITY_API_KEY. Skipping retry.")
+                raise Exception(f"Perplexity Sonar API error: Unauthorized. Check API Key.")
+                
             # Determine if this is a retryable error
             is_retryable = (
                 "429" in str(e) or  # Rate limit
@@ -87,7 +87,7 @@ async def call_google_learnlm(
             
             # Special handling for 404 (model not found) - don't retry
             if "404" in str(e) or "not found" in error_str:
-                raise Exception(f"LearnLM model not found. Please check the model name 'learnlm-2.0-flash-experimental' is correct.")
+                raise Exception(f"Gemini model not found. Please check the model name 'gemini-3-flash-preview' is correct.")
             
             if is_retryable and not is_last_attempt:
                 # Exponential backoff: 3s, 6s, 12s, 24s, 48s
@@ -97,10 +97,10 @@ async def call_google_learnlm(
                 await asyncio.sleep(delay)
                 continue
             elif is_retryable and is_last_attempt:
-                raise Exception(f"LearnLM API failed after {max_retries} retries. Last error: {str(e)[:200]}")
+                raise Exception(f"Gemini API failed after {max_retries} retries. Last error: {str(e)[:200]}")
             else:
                 # Non-retryable error, raise immediately
-                raise Exception(f"LearnLM API error: {str(e)[:200]}")
+                raise Exception(f"Gemini API error: {str(e)[:200]}")
 
 
 @weave.op()
@@ -147,49 +147,86 @@ async def call_perplexity(
     }
     
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(url, headers=headers, json=payload, timeout=120)
-            response.raise_for_status()
-            
-            data = response.json()
-            
-            if "choices" in data and data["choices"]:
-                choice = data["choices"][0]
-                content = choice["message"]["content"]
+        # Retry logic with exponential backoff
+        max_retries = 3
+        base_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(url, headers=headers, json=payload, timeout=120)
+                    response.raise_for_status()
+                    
+                    data = response.json()
+                    
+                    if "choices" in data and data["choices"]:
+                        choice = data["choices"][0]
+                        content = choice["message"]["content"]
+                        
+                        # Extract sources/citations
+                        sources = []
+                        if "citations" in data:
+                            # Format: citations is a list of URLs
+                            for i, citation_url in enumerate(data.get("citations", [])):
+                                sources.append({
+                                    "title": f"Source {i+1}",
+                                    "url": citation_url,
+                                    "snippet": ""
+                                })
+                        
+                        return {
+                            "content": content,
+                            "sources": sources
+                        }
+                    else:
+                        raise Exception(f"No choices in Perplexity response: {data}")
+                        
+            except httpx.HTTPStatusError as e:
+                # Handle specific HTTP errors
+                status_code = e.response.status_code
+                if status_code == 401:
+                    print("⚠️ Perplexity API Error: 401 Unauthorized. Please check your PERPLEXITY_API_KEY.")
+                    # Don't retry auth errors, return empty results
+                    return {"content": "Information could not be retrieved due to API authentication error.", "sources": []}
+                elif status_code == 402:
+                    print("⚠️ Perplexity API Error: 402 Payment Required. Check your account balance.")
+                    return {"content": "Information could not be retrieved due to API payment error.", "sources": []}
                 
-                # Extract sources/citations
-                sources = []
-                if "citations" in data:
-                    # Format: citations is a list of URLs
-                    for i, url in enumerate(data.get("citations", [])):
-                        sources.append({
-                            "title": f"Source {i+1}",
-                            "url": url,
-                            "snippet": ""
-                        })
-                
-                return {
-                    "content": content,
-                    "sources": sources
-                }
-            else:
-                raise Exception(f"No choices in Perplexity response: {data}")
-                
+                # If not the last attempt, maybe retry
+                if attempt < max_retries - 1 and status_code in [429, 500, 502, 503, 504]:
+                    delay = base_delay * (2 ** attempt)
+                    print(f"   ⏳ Perplexity API error ({status_code}), retrying in {delay}s...")
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    raise e
+                    
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    print(f"   ⏳ Perplexity connection error, retrying in {delay}s...")
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    raise e
+                    
     except Exception as e:
-        raise Exception(f"Perplexity Sonar API error: {str(e)}")
+        print(f"⚠️ Perplexity Sonar API error: {str(e)}")
+        # Return fallback content instead of failing completely
+        return {
+            "content": f"Unable to fetch information using Perplexity at this time. Please proceed with general knowledge.",
+            "sources": []
+        }
 
 
 @weave.op()
-async def call_qwen3_coder(
+async def call_gemini_coder(
     prompt: str,
     temperature: float = 0.2,
     max_tokens: int = 9000
 ) -> str:
     """
-    Call Qwen3 Coder 480B via W&B Inference API with retry and fallback
-    
-    Uses W&B's hosted inference endpoint with Weave tracing
-    Falls back to Gemini if W&B Inference is unavailable
+    Call Gemini 3.0 Flash for code generation
     
     Args:
         prompt: Code generation prompt
@@ -201,67 +238,22 @@ async def call_qwen3_coder(
     """
     import asyncio
     
-    # Try W&B Inference with retry logic
-    max_retries = 2
-    for attempt in range(max_retries):
-        try:
-            print(f"   🔄 Attempt {attempt + 1}/{max_retries} - Calling Qwen3 Coder via W&B Inference...")
-            
-            # Create OpenAI client pointing to W&B Inference
-            wb_client = AsyncOpenAI(
-                base_url='https://api.inference.wandb.ai/v1',
-                api_key=os.getenv("WANDB_API_KEY"),
-                timeout=60.0  # 60 second timeout
-            )
-            
-            # Call Qwen3 Coder 480B
-            response = await wb_client.chat.completions.create(
-                model="Qwen/Qwen3-Coder-480B-A35B-Instruct",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are an expert React developer creating educational interactive components. Generate clean, well-commented, production-ready code."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                temperature=temperature,
-                max_tokens=max_tokens
-            )
-            
-            print(f"   ✅ Qwen3 Coder succeeded on attempt {attempt + 1}")
-            return response.choices[0].message.content
-            
-        except Exception as e:
-            error_msg = str(e)
-            print(f"   ⚠️ Qwen3 Coder attempt {attempt + 1} failed: {error_msg[:100]}")
-            
-            # If not last attempt, wait and retry
-            if attempt < max_retries - 1:
-                wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s
-                print(f"   ⏳ Retrying in {wait_time}s...")
-                await asyncio.sleep(wait_time)
-            else:
-                # All retries failed, fallback to Gemini
-                print(f"   ❌ All Qwen3 Coder attempts failed")
-                print(f"   🔄 Falling back to Gemini for code generation...")
-                
-                try:
-                    # Use Gemini as fallback
-                    gemini_response = await call_google_learnlm(
-                        prompt + "\n\nIMPORTANT: Return ONLY the complete React component code. Use semicolons after every statement!",
-                        temperature=temperature,
-                        max_tokens=max_tokens
-                    )
-                    print(f"   ✅ Gemini fallback succeeded")
-                    return gemini_response
-                    
-                except Exception as gemini_error:
-                    error_msg = f"Both Qwen3 and Gemini failed: {str(gemini_error)}"
-                    print(f"   ❌ {error_msg}")
-                    raise Exception(error_msg)
+    # Use Gemini 3.0 Flash for code generation instead of Qwen
+    print("   🔄 Calling Gemini 3 Flash for code generation...")
+    
+    try:
+        gemini_response = await call_gemini(
+            prompt + "\n\nIMPORTANT: Return ONLY the complete React component code. Use semicolons after every statement!",
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
+        print("   ✅ Gemini code generation succeeded")
+        return gemini_response
+        
+    except Exception as e:
+        error_msg = f"Gemini code generation failed: {str(e)}"
+        print(f"   ❌ {error_msg}")
+        raise Exception(error_msg)
 
 
 def extract_code_block(response: str, language: str = "jsx") -> str:

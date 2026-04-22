@@ -11,7 +11,7 @@ from typing import Dict, Any, Optional
 from uuid import UUID, uuid4
 from datetime import datetime
 
-from services.ai_service import call_qwen3_coder, extract_code_block, has_errors, call_google_learnlm
+from services.ai_service import call_gemini_coder, extract_code_block, has_errors, call_gemini
 from services.knowledge_service import explain_topic_with_sources
 from services.memory_service import (
     load_student_memories,
@@ -156,8 +156,8 @@ async def generate_activity(
         print(f"   Found {len(knowledge_context.get('sources', []))} sources")
     # else: Already loaded from lesson!
     
-    # Step 4: Generate React code using Qwen3 Coder (via W&B Inference)
-    print(f"   💻 Generating React code with Qwen3 Coder 480B...")
+    # Step 4: Generate React code using Gemini 3.0 Flash
+    print(f"   💻 Generating React code with Gemini 3.0 Flash...")
     code = await generate_react_activity_code(
         topic=topic,
         grade=student['grade'],
@@ -255,7 +255,7 @@ async def generate_react_activity_code(
     knowledge_context: Dict,
     student: Dict
 ) -> str:
-    """Generate React code for educational activity using Qwen3 Coder"""
+    """Generate React code for educational activity using Gemini 3.0 Flash"""
     
     # Truncate explanation to avoid token limits
     explanation = knowledge_context.get('explanation', '')[:1000]
@@ -440,8 +440,8 @@ Start with: import React, {{ useState, useEffect, useCallback }} from 'react';
 Generate BEAUTIFUL code now:
 """
     
-    # Call Qwen3 Coder 480B via W&B Inference
-    response = await call_qwen3_coder(prompt, temperature=0.3, max_tokens=6000)
+    # Call Gemini 3.0 Flash
+    response = await call_gemini_coder(prompt, temperature=0.3, max_tokens=6000)
     
     # Extract code from response
     code = extract_code_block(response, language="jsx")
@@ -510,7 +510,7 @@ async def deploy_with_auto_fix(
             if attempt < max_attempts:
                 print(f"      🔧 Attempting to auto-fix code...")
                 
-                # Use Qwen3 to fix the errors
+                # Use Gemini to fix the errors
                 fixed_code = await fix_code_errors(
                     original_code=code,
                     error_logs=str(error_logs),
@@ -570,7 +570,7 @@ async def fix_code_errors(
     topic: str,
     attempt_number: int
 ) -> str:
-    """Use Qwen3 Coder to fix errors in generated code"""
+    """Use Gemini 3.0 Flash to fix errors in generated code"""
     
     # Truncate code and logs to avoid token limits
     code_preview = original_code[:2000]
@@ -639,8 +639,8 @@ Return the COMPLETE, FIXED React component code.
 Return ONLY the complete fixed code (no markdown, no explanation):
 """
     
-    # Call Qwen3 Coder to fix
-    response = await call_qwen3_coder(prompt, temperature=0.2, max_tokens=6000)
+    # Call Gemini to fix
+    response = await call_gemini_coder(prompt, temperature=0.2, max_tokens=6000)
     
     # Extract fixed code
     fixed_code = extract_code_block(response, language="jsx")
@@ -750,7 +750,7 @@ Return ONLY the complete React component code in a code block. NO explanations, 
 """
     
     # Generate modified code
-    new_code = await call_qwen3_coder(prompt, temperature=0.2, max_tokens=9000)
+    new_code = await call_gemini_coder(prompt, temperature=0.2, max_tokens=9000)
     
     # Clean code
     if '```' in new_code:
@@ -772,7 +772,7 @@ TUTOR'S REQUEST: {tutor_message}
 Provide a concise summary of the changes made:
 """
     
-    explanation = await call_google_learnlm(changes_prompt, temperature=0.3, max_tokens=200)
+    explanation = await call_gemini(changes_prompt, temperature=0.3, max_tokens=200)
     
     # Try to redeploy (optional - can fail gracefully)
     sandbox_url = None

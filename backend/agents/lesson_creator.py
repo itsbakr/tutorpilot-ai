@@ -9,7 +9,7 @@ from typing import Dict, Any, Optional, List
 from uuid import UUID, uuid4
 from datetime import datetime
 
-from services.ai_service import call_google_learnlm
+from services.ai_service import call_gemini
 from services.knowledge_service import explain_topic_with_sources
 from services.memory_service import (
     load_student_memories,
@@ -386,7 +386,7 @@ Return ONLY valid JSON (no markdown):
 }}
 """
     
-    response = await call_google_learnlm(prompt, temperature=0.7, max_tokens=4000)
+    response = await call_gemini(prompt, temperature=0.7, max_tokens=4000)
     
     # Parse JSON
     parsed = parse_json_response(response)
@@ -559,7 +559,7 @@ Return ONLY valid JSON:
 }}
 """
     
-    response = await call_google_learnlm(prompt, temperature=0.7, max_tokens=5000)
+    response = await call_gemini(prompt, temperature=0.7, max_tokens=5000)
     
     # Parse JSON
     parsed = parse_json_response(response)

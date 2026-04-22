@@ -9,7 +9,7 @@ from typing import Dict, Any, List
 from uuid import UUID, uuid4
 from datetime import datetime
 
-from services.ai_service import call_google_learnlm
+from services.ai_service import call_gemini
 from services.knowledge_service import explain_multiple_topics
 from services.memory_service import (
     load_student_memories,
@@ -168,7 +168,7 @@ Week 2: Newton's Laws - The Rules of Motion
 Now generate {weeks} topics for {subject}:
 """
     
-    response = await call_google_learnlm(prompt, temperature=0.8, max_tokens=800)
+    response = await call_gemini(prompt, temperature=0.8, max_tokens=800)
     
     # Extract topics from response
     topics = []
@@ -299,7 +299,7 @@ For each week, describe:
 Write the complete strategy in **markdown format**. Be thorough and pedagogically sophisticated.
 """
     
-    response = await call_google_learnlm(prompt, temperature=0.8, max_tokens=6000)
+    response = await call_gemini(prompt, temperature=0.8, max_tokens=6000)
     
     # Return as structured data (markdown content + metadata)
     return {
