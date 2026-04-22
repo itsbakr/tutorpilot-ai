@@ -8,7 +8,7 @@ Self-improving AI agent system for educational content generation.
 
 - Python 3.12+
 - Supabase account
-- API Keys: Google LearnLM, Perplexity, W&B, Daytona
+- API Keys: Google Gemini 3.0 Flash, Perplexity, W&B, Daytona
 
 ### Installation
 
@@ -33,7 +33,7 @@ SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your-anon-key
 
 # AI Models
-GOOGLE_LEARNLM_API_KEY=your-google-ai-studio-key
+GOOGLE_GEMINI_API_KEY=your-google-ai-studio-key
 PERPLEXITY_API_KEY=pplx-your-key
 WANDB_API_KEY=your-wandb-key
 
@@ -62,7 +62,7 @@ backend/
 │   ├── evaluator.py            # Self-evaluation logic
 │   └── reflection_service.py   # Learning insights analysis
 ├── services/
-│   ├── ai_service.py           # LearnLM, Perplexity, Qwen3 clients
+│   ├── ai_service.py           # Gemini 3.0 Flash, Perplexity, Gemini 3.0 Flash clients
 │   ├── daytona_service.py      # React sandbox deployment
 │   ├── knowledge_service.py    # Research queries + retrieval
 │   └── memory_service.py       # Agentic memory operations
@@ -97,7 +97,7 @@ This demonstrates:
 
 ### Auto-Debugging
 - Activity Creator auto-fixes React code errors
-- Up to 3 attempts with Qwen3 Coder
+- Up to 3 attempts with Gemini 3.0 Flash
 - Falls back to Gemini if W&B Inference fails
 
 ### Reflection Loop
@@ -133,7 +133,7 @@ This demonstrates:
 |-----------|-----------|
 | Framework | FastAPI 0.109.0 |
 | Database | Supabase (PostgreSQL) |
-| AI Models | Google LearnLM, Perplexity Sonar, Qwen3 Coder 480B |
+| AI Models | Google Gemini 3.0 Flash, Perplexity Sonar, Gemini 3.0 Flash |
 | Tracing | Weave (W&B) |
 | Sandboxes | Daytona |
 | Async | httpx, asyncio |
