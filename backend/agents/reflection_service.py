@@ -8,7 +8,7 @@ import weave
 from typing import List, Dict, Any
 from datetime import datetime, timedelta
 from db.supabase_client import supabase
-from services.ai_service import call_google_learnlm
+from services.ai_service import call_gemini
 
 
 class ReflectionService:
@@ -150,7 +150,7 @@ Return ONLY valid JSON:
 }}
 """
         
-        response = await call_google_learnlm(prompt, temperature=0.4, max_tokens=2000)
+        response = await call_gemini(prompt, temperature=0.4, max_tokens=2000)
         
         # Parse insights
         try:

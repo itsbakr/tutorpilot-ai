@@ -7,7 +7,7 @@ Critical for self-improvement loop
 import json
 import weave
 from typing import Dict, Any
-from services.ai_service import call_google_learnlm
+from services.ai_service import call_gemini
 
 
 class SelfEvaluator:
@@ -30,7 +30,7 @@ class SelfEvaluator:
             Evaluation dict with scores and feedback
         """
         prompt = self._build_strategy_eval_prompt(strategy, student)
-        response = await call_google_learnlm(prompt, temperature=0.3, max_tokens=1500)
+        response = await call_gemini(prompt, temperature=0.3, max_tokens=1500)
         
         return self._parse_evaluation(response)
     
@@ -42,7 +42,7 @@ class SelfEvaluator:
     ) -> Dict[str, Any]:
         """Self-evaluate a generated lesson"""
         prompt = self._build_lesson_eval_prompt(lesson, student)
-        response = await call_google_learnlm(prompt, temperature=0.3, max_tokens=1500)
+        response = await call_gemini(prompt, temperature=0.3, max_tokens=1500)
         
         return self._parse_evaluation(response)
     
@@ -55,7 +55,7 @@ class SelfEvaluator:
     ) -> Dict[str, Any]:
         """Self-evaluate a generated activity (including code quality)"""
         prompt = self._build_activity_eval_prompt(activity, student, deployment_status)
-        response = await call_google_learnlm(prompt, temperature=0.3, max_tokens=1500)
+        response = await call_gemini(prompt, temperature=0.3, max_tokens=1500)
         
         return self._parse_evaluation(response)
     
@@ -337,6 +337,9 @@ Return ONLY valid JSON:
                     print(f"⚠️ JSON missing required fields: {list(evaluation.keys())}")
             except json.JSONDecodeError as e:
                 print(f"⚠️ JSON parsing attempt failed: {str(e)[:100]}")
+                continue
+            except Exception as e:
+                print(f"⚠️ Error during JSON processing: {str(e)[:100]}")
                 continue
         
         # Fallback evaluation with debugging info

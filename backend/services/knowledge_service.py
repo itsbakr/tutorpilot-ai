@@ -7,13 +7,13 @@ Non-personalized, universal knowledge layer
 import asyncio
 import weave
 from typing import List, Dict, Any
-from .ai_service import call_google_learnlm, call_perplexity
+from .ai_service import call_gemini, call_perplexity
 
 
 @weave.op()
 async def generate_queries(topic: str, grade: str, subject: str) -> List[str]:
     """
-    Generate 2-3 search queries for a topic using LearnLM
+    Generate 2-3 search queries for a topic using Gemini
     
     Args:
         topic: The learning topic
@@ -38,7 +38,7 @@ Return ONLY a JSON array of 2-3 query strings:
 ["query 1", "query 2", "query 3"]
 """
     
-    response = await call_google_learnlm(prompt, temperature=0.3, max_tokens=200)
+    response = await call_gemini(prompt, temperature=0.3, max_tokens=200)
     
     # Parse queries from response
     import json
