@@ -1,6 +1,12 @@
 import axios from 'axios';
 import type { StrategyResponse, LessonResponse, ActivityResponse } from './types';
 
+export type ActivityChatStreamEvent =
+  | { type: 'stage'; stage: 'thinking' | 'editing' | 'debugging' | 'deploying' }
+  | { type: 'explanation'; text: string }
+  | { type: 'ready'; sandbox_url?: string; new_code?: string; explanation?: string }
+  | { type: 'error'; message: string };
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 export const api = axios.create({
@@ -148,7 +154,64 @@ export const activityApi = {
     const response = await api.post('/api/v1/activity/chat', data);
     return response.data;
   },
-  
+
+  /**
+   * Streaming variant of `chat`. Reads SSE-style `data: {json}\n\n` events from
+   * the POST response body and dispatches them via `onEvent`. Resolves when the
+   * stream closes. Throws on network failures so the caller can show an error.
+   */
+  chatStream: async (
+    data: {
+      activity_id: string;
+      tutor_id: string;
+      student_id: string;
+      message: string;
+    },
+    onEvent: (evt: ActivityChatStreamEvent) => void,
+    signal?: AbortSignal
+  ): Promise<void> => {
+    const res = await fetch(`${API_URL}/api/v1/activity/chat/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+      },
+      body: JSON.stringify(data),
+      signal,
+    });
+
+    if (!res.ok || !res.body) {
+      throw new Error(`Stream failed: ${res.status} ${res.statusText}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      let idx: number;
+      while ((idx = buffer.indexOf('\n\n')) !== -1) {
+        const chunk = buffer.slice(0, idx).trim();
+        buffer = buffer.slice(idx + 2);
+        if (!chunk) continue;
+        for (const line of chunk.split('\n')) {
+          if (!line.startsWith('data:')) continue;
+          const json = line.slice(5).trim();
+          if (!json) continue;
+          try {
+            onEvent(JSON.parse(json) as ActivityChatStreamEvent);
+          } catch (err) {
+            console.warn('Failed to parse stream event', err, json);
+          }
+        }
+      }
+    }
+  },
+
   getChatHistory: async (activityId: string) => {
     const response = await api.get(`/api/v1/activity/chat/${activityId}`);
     return response.data;

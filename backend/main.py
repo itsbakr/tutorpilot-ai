@@ -5,6 +5,8 @@ Self-Improving AI Tutoring Platform
 
 from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+import json
 from contextlib import asynccontextmanager
 import weave
 import os
@@ -917,6 +919,146 @@ async def activity_chat(request: ActivityChatRequest):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/activity/chat/stream")
+async def activity_chat_stream(request: ActivityChatRequest):
+    """
+    Streaming variant of /activity/chat that emits SSE-style events for stage progress.
+
+    Event payloads (one JSON object per line, prefixed with `data: `):
+      {"type": "stage", "stage": "thinking|editing|debugging|deploying"}
+      {"type": "explanation", "text": "..."}
+      {"type": "ready", "sandbox_url": "...", "new_code": "...", "explanation": "..."}
+      {"type": "error", "message": "..."}
+
+    The underlying Gemini call is non-streaming (single generate_content call), so
+    this endpoint streams stage events while the existing pipeline runs in the
+    background, giving the UI a live "vibe-coding" feel without changing the model
+    integration.
+    """
+    async def event_stream():
+        def sse(payload: dict) -> str:
+            return f"data: {json.dumps(payload)}\n\n"
+
+        try:
+            yield sse({"type": "stage", "stage": "thinking"})
+
+            # Save tutor message
+            tutor_message = {
+                'activity_id': request.activity_id,
+                'tutor_id': request.tutor_id,
+                'message_type': 'tutor_request',
+                'message_content': request.message
+            }
+            supabase.table('activity_chat_history').insert(tutor_message).execute()
+
+            # Get current activity
+            activity_result = supabase.table('activities')\
+                .select('*')\
+                .eq('id', request.activity_id)\
+                .execute()
+
+            if not activity_result.data:
+                yield sse({"type": "error", "message": "Activity not found"})
+                return
+
+            current_activity = activity_result.data[0]
+            current_code = current_activity['content'].get('code', '')
+
+            yield sse({"type": "stage", "stage": "editing"})
+
+            # Run the iteration (Gemini regenerate + redeploy)
+            # We can't easily stream tokens through the existing helper, so
+            # we run the stages sequentially and emit stage events around each.
+            from agents.activity_creator import iterate_activity_from_chat
+
+            # We can't interleave events inside iterate_activity_from_chat without
+            # refactoring it, so we emit "deploying" right before awaiting the
+            # call (the Daytona deploy is the long pole inside the function).
+            iter_task = asyncio.create_task(iterate_activity_from_chat(
+                activity_id=request.activity_id,
+                student_id=request.student_id,
+                current_code=current_code,
+                tutor_message=request.message,
+                topic=current_activity.get('topic', '')
+            ))
+
+            # Heartbeat stage progression: emit `debugging` then `deploying`
+            # while waiting. We shield the task inside `wait_for` so the timeout
+            # only advances the stage UI without cancelling the iteration.
+            # If the client disconnects, the generator receives CancelledError
+            # and we cancel iter_task in the finally so the model call and DB
+            # writes are abandoned instead of completing silently.
+            try:
+                stage_timeline = [
+                    (8, "debugging"),
+                    (18, "deploying"),
+                ]
+                elapsed = 0
+                for delay, next_stage in stage_timeline:
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.shield(iter_task), timeout=delay - elapsed
+                        )
+                        break  # task finished early
+                    except asyncio.TimeoutError:
+                        elapsed = delay
+                        yield sse({"type": "stage", "stage": next_stage})
+
+                # Final wait — no shield, so cancellation here will cancel
+                # iter_task too (handled in the finally for cleanliness).
+                result = await iter_task
+            finally:
+                if not iter_task.done():
+                    iter_task.cancel()
+
+            new_code = result.get('new_code')
+            sandbox_url = result.get('sandbox_url')
+            explanation = result.get('explanation', 'Activity updated')
+
+            # Save agent response
+            agent_message = {
+                'activity_id': request.activity_id,
+                'tutor_id': request.tutor_id,
+                'message_type': 'agent_response',
+                'message_content': explanation,
+                'code_snapshot': new_code,
+                'sandbox_url': sandbox_url
+            }
+            supabase.table('activity_chat_history').insert(agent_message).execute()
+
+            # Update activity
+            supabase.table('activities')\
+                .update({
+                    'content': {
+                        **current_activity['content'],
+                        'code': new_code,
+                        'iteration_count': current_activity['content'].get('iteration_count', 0) + 1
+                    }
+                })\
+                .eq('id', request.activity_id)\
+                .execute()
+
+            yield sse({
+                "type": "ready",
+                "sandbox_url": sandbox_url,
+                "new_code": new_code,
+                "explanation": explanation,
+            })
+
+        except Exception as e:
+            yield sse({"type": "error", "message": str(e)[:300]})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
 
 
 @app.get("/api/v1/activity/chat/{activity_id}")
