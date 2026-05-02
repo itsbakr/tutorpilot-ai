@@ -142,6 +142,81 @@ async def store_learning_insight(
         print(f"Error storing learning insight: {str(e)}")
 
 
+async def write_finding(
+    entity_type: str,
+    entity_id: str,
+    memory_category: str,
+    memory_key: str,
+    memory_value: Dict[str, Any],
+    confidence_score: float,
+) -> None:
+    """Write a high-confidence finding directly into platform_memory.
+
+    If a memory with the same entity + category + key already exists, append to it
+    by incrementing update_count and replacing memory_value. Otherwise insert new.
+    """
+    try:
+        existing = supabase.table('platform_memory') \
+            .select('id, update_count') \
+            .eq('entity_type', entity_type) \
+            .eq('entity_id', entity_id) \
+            .eq('memory_category', memory_category) \
+            .eq('memory_key', memory_key) \
+            .limit(1) \
+            .execute()
+
+        now = datetime.now().isoformat()
+
+        if existing.data:
+            row = existing.data[0]
+            supabase.table('platform_memory').update({
+                'memory_value': memory_value,
+                'confidence_score': confidence_score,
+                'last_updated': now,
+                'update_count': (row.get('update_count') or 1) + 1,
+            }).eq('id', row['id']).execute()
+        else:
+            supabase.table('platform_memory').insert({
+                'entity_type': entity_type,
+                'entity_id': entity_id,
+                'memory_category': memory_category,
+                'memory_key': memory_key,
+                'memory_value': memory_value,
+                'confidence_score': confidence_score,
+                'created_at': now,
+                'last_updated': now,
+                'update_count': 1,
+            }).execute()
+    except Exception as e:
+        print(f"Error writing platform memory finding: {str(e)}")
+
+
+async def stage_memory_proposal(
+    source_session_id: Optional[str],
+    entity_type: str,
+    entity_id: str,
+    memory_category: str,
+    memory_key: str,
+    memory_value: Dict[str, Any],
+    confidence_score: float,
+) -> None:
+    """Stage a lower-confidence finding as a proposal awaiting tutor approval."""
+    try:
+        supabase.table('memory_proposals').insert({
+            'source_session_id': source_session_id,
+            'entity_type': entity_type,
+            'entity_id': entity_id,
+            'memory_category': memory_category,
+            'memory_key': memory_key,
+            'memory_value': memory_value,
+            'confidence_score': confidence_score,
+            'status': 'pending',
+            'created_at': datetime.now().isoformat(),
+        }).execute()
+    except Exception as e:
+        print(f"Error staging memory proposal: {str(e)}")
+
+
 def format_insights_for_prompt(insights: List[Dict]) -> str:
     """
     Format learning insights for inclusion in generation prompts
