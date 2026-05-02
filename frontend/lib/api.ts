@@ -230,4 +230,80 @@ export const activityApi = {
   },
 };
 
+export const feedbackApi = {
+  uploadSession: async (data: {
+    student_id: string;
+    tutor_id: string;
+    lesson_id?: string;
+    occurred_at?: string;
+    file: File;
+  }) => {
+    const form = new FormData();
+    form.append('student_id', data.student_id);
+    form.append('tutor_id', data.tutor_id);
+    if (data.lesson_id) form.append('lesson_id', data.lesson_id);
+    if (data.occurred_at) form.append('occurred_at', data.occurred_at);
+    form.append('file', data.file);
+    const response = await api.post('/api/v1/sessions/upload', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  },
+
+  triggerAssess: async (sessionId: string) => {
+    const response = await api.post(`/api/v1/sessions/${sessionId}/assess`);
+    return response.data;
+  },
+
+  getSession: async (sessionId: string) => {
+    const response = await api.get(`/api/v1/sessions/${sessionId}`);
+    return response.data;
+  },
+
+  listSessions: async (studentId: string) => {
+    const response = await api.get(`/api/v1/students/${studentId}/sessions`);
+    return response.data;
+  },
+
+  generateReport: async (data: {
+    student_id: string;
+    tutor_id: string;
+    mode: 'per_session' | 'weekly_digest';
+    session_ids: string[];
+    period_start?: string;
+    period_end?: string;
+  }) => {
+    const response = await api.post('/api/v1/agents/feedback-generator', data);
+    return response.data;
+  },
+
+  listReports: async (studentId: string) => {
+    const response = await api.get(`/api/v1/students/${studentId}/feedback-reports`);
+    return response.data;
+  },
+
+  patchReport: async (
+    reportId: string,
+    patch: { markdown?: string; title?: string; status?: string },
+  ) => {
+    const response = await api.patch(`/api/v1/feedback-reports/${reportId}`, patch);
+    return response.data;
+  },
+
+  listMemoryProposals: async (studentId: string, status: string = 'pending') => {
+    const response = await api.get(
+      `/api/v1/students/${studentId}/memory-proposals?status=${encodeURIComponent(status)}`,
+    );
+    return response.data;
+  },
+
+  decideMemoryProposal: async (
+    proposalId: string,
+    data: { decision: 'approved' | 'rejected'; reviewed_by?: string },
+  ) => {
+    const response = await api.post(`/api/v1/memory-proposals/${proposalId}/decision`, data);
+    return response.data;
+  },
+};
+
 export type { StrategyResponse, LessonResponse, ActivityResponse };

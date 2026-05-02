@@ -22,6 +22,7 @@ import {
   GlobeAltIcon,
   HeartIcon,
   LightBulbIcon,
+  MicrophoneIcon,
   PencilSquareIcon,
   PlusIcon,
   PuzzlePieceIcon,
@@ -187,7 +188,7 @@ export default function StudentDetailPage() {
           </div>
 
           {/* Quick actions */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-3">
             <Link href={`/strategy?student=${studentId}`}>
               <GlassCard hover padding="md" className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center">
@@ -218,6 +219,28 @@ export default function StudentDetailPage() {
                 <div className="min-w-0">
                   <p className="font-semibold text-foreground">New Activity</p>
                   <p className="text-sm text-[var(--foreground-muted)]">Interactive practice app</p>
+                </div>
+              </GlassCard>
+            </Link>
+            <Link href={`/students/${studentId}/sessions`}>
+              <GlassCard hover padding="md" className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center">
+                  <MicrophoneIcon className="w-5 h-5 text-indigo-600" />
+                </div>
+                <div className="min-w-0">
+                  <p className="font-semibold text-foreground">Sessions</p>
+                  <p className="text-sm text-[var(--foreground-muted)]">Recordings & assessments</p>
+                </div>
+              </GlassCard>
+            </Link>
+            <Link href={`/students/${studentId}/feedback`}>
+              <GlassCard hover padding="md" className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center">
+                  <DocumentTextIcon className="w-5 h-5 text-rose-600" />
+                </div>
+                <div className="min-w-0">
+                  <p className="font-semibold text-foreground">Parent reports</p>
+                  <p className="text-sm text-[var(--foreground-muted)]">Drafts to review & send</p>
                 </div>
               </GlassCard>
             </Link>
