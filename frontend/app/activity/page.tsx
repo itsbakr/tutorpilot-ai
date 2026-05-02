@@ -8,8 +8,7 @@ import { useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/AppShell';
 import { activityApi, dataApi } from '@/lib/api';
 import { SelfEvaluationCard } from '@/components/SelfEvaluationCard';
-import { SandboxPreview } from '@/components/SandboxPreview';
-import { ActivityChat } from '@/components/ActivityChat';
+import { BuilderShell } from '@/components/builder/BuilderShell';
 import { ContentGallery } from '@/components/ContentGallery';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { Button } from '@/components/ui/Button';
@@ -382,6 +381,40 @@ function ActivityPageInner() {
     { title: 'Validate', subtitle: `Auto-fixing up to ${formData.max_attempts} attempt(s)` },
   ];
 
+  const exitToForm = () => {
+    setActivity(null);
+    setEvaluation(null);
+    setCode('');
+    setSandboxUrl('');
+    setProgressStep(0);
+  };
+
+  // When the builder is showing, swap to the immersive layout
+  const showBuilder = !!activity?.activity_id && !!code && !loading;
+
+  if (showBuilder && activity?.activity_id) {
+    return (
+      <AppShell>
+        <BuilderShell
+          activityId={activity.activity_id}
+          tutorId={formData.tutor_id}
+          studentId={formData.student_id}
+          initialSandboxUrl={sandboxUrl}
+          initialDeploymentStatus={activity.deployment?.status}
+          tutorName={user?.name}
+          topic={(activity as any)?.content?.topic || formData.topic || (selectedLesson?.title ?? 'Activity')}
+          onCodeUpdate={(newCode, newUrl) => handleCodeUpdate(newCode, newUrl || '')}
+          onExitToForm={exitToForm}
+        />
+        {evaluation && (
+          <div className="max-w-7xl mx-auto mt-6">
+            <SelfEvaluationCard evaluation={evaluation} agentName="Activity Creator" />
+          </div>
+        )}
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell>
       <div className="max-w-7xl mx-auto space-y-6">
@@ -608,57 +641,25 @@ function ActivityPageInner() {
           </GlassCard>
         )}
 
-        {/* Results */}
-        {activity && !loading && (
-          <div className="space-y-6">
-            <SandboxPreview
-              code={code}
-              sandboxUrl={sandboxUrl}
-              status={activity.deployment?.status}
-              attempts={activity.deployment?.attempts}
-              isRebuilding={!!redeployingActivity}
-              rebuildMessage={redeployingActivity ? 'Redeploying activity from gallery…' : 'Rebuilding sandbox…'}
-            />
-
-            {activity.deployment?.status === 'failed' && code && (
-              <GlassCard padding="lg" className="border border-[var(--warning)]/20 bg-[var(--warning-bg)]">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-lg font-bold text-foreground">Deployment failed</p>
-                    <p className="text-sm text-[var(--foreground-muted)]">
-                      The code was generated but didn’t deploy successfully.
-                    </p>
-                  </div>
-                  <span className="badge badge-warning">Failed</span>
-                </div>
-                <div className="mt-4 flex flex-col sm:flex-row gap-3">
-                  <Button variant="gradient" onClick={handleRetryDeployment}>
-                    Retry deployment
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    onClick={() => {
-                      if (code) navigator.clipboard.writeText(code);
-                      toast.success('Copied', 'Activity code copied to clipboard.');
-                    }}
-                  >
-                    Copy code
-                  </Button>
-                </div>
-              </GlassCard>
-            )}
-
-            {activity.activity_id && code && sandboxUrl && (
-              <ActivityChat
-                activityId={activity.activity_id}
-                tutorId={formData.tutor_id}
-                studentId={formData.student_id}
-                onCodeUpdate={handleCodeUpdate}
-              />
-            )}
-
-            {evaluation && <SelfEvaluationCard evaluation={evaluation} agentName="Activity Creator" />}
-          </div>
+        {/* Failed deployment retry CTA — shown only on the form view if generation
+            returned no code yet (the builder shell handles errors otherwise). */}
+        {activity && !loading && activity.deployment?.status === 'failed' && !code && (
+          <GlassCard padding="lg" className="border border-[var(--warning)]/20 bg-[var(--warning-bg)]">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-lg font-bold text-foreground">Deployment failed</p>
+                <p className="text-sm text-[var(--foreground-muted)]">
+                  The activity didn’t generate successfully. Try again with a different prompt.
+                </p>
+              </div>
+              <span className="badge badge-warning">Failed</span>
+            </div>
+            <div className="mt-4 flex flex-col sm:flex-row gap-3">
+              <Button variant="gradient" onClick={handleRetryDeployment}>
+                Retry deployment
+              </Button>
+            </div>
+          </GlassCard>
         )}
 
         {/* Past activities */}
@@ -680,6 +681,7 @@ function ActivityPageInner() {
               } as any);
               setEvaluation(item.self_evaluation || null);
               setSandboxUrl(item.sandbox_url || '');
+              setCode(item.content?.code || '');
               window.scrollTo({ top: 0, behavior: 'smooth' });
             }}
             onPreview={handlePreviewActivity}
