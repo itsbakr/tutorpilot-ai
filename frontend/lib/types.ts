@@ -72,6 +72,19 @@ export interface LessonResponse {
   tutor: Record<string, unknown>;
 }
 
+export type ActivityChatRole = 'tutor' | 'agent' | 'system';
+
+export interface ActivityChatMessage {
+  id?: string;
+  role: ActivityChatRole;
+  content: string;
+  created_at: string;
+  sandbox_url?: string;
+  isStreaming?: boolean;
+  stage?: 'thinking' | 'editing' | 'debugging' | 'deploying' | 'ready' | 'error';
+  error?: string;
+}
+
 export interface ContentVersion {
   version_number: number;
   content: Record<string, unknown>;
