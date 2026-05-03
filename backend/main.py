@@ -74,6 +74,11 @@ app.add_middleware(
 )
 
 
+# Mount tutor AI tools router (sessions, versions, insights, recap, alignment, etc.)
+from routers.tutor_tools import router as tutor_tools_router, snapshot_version
+app.include_router(tutor_tools_router)
+
+
 @app.get("/")
 async def root():
     """Root endpoint"""
@@ -1038,6 +1043,17 @@ async def activity_chat_stream(request: ActivityChatRequest):
                 })\
                 .eq('id', request.activity_id)\
                 .execute()
+
+            # Snapshot a new version (Tier 3.4)
+            try:
+                await snapshot_version(
+                    activity_id=request.activity_id,
+                    code=new_code,
+                    sandbox_url=sandbox_url,
+                    tutor_id=request.tutor_id,
+                )
+            except Exception as ver_e:
+                print(f"⚠️ Failed to snapshot version: {ver_e}")
 
             yield sse({
                 "type": "ready",

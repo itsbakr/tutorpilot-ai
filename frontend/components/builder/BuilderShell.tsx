@@ -2,7 +2,13 @@
 
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowLeftIcon, BoltIcon } from '@heroicons/react/24/outline';
+import {
+  AcademicCapIcon,
+  ArrowLeftIcon,
+  ArrowsRightLeftIcon,
+  BoltIcon,
+  UserGroupIcon,
+} from '@heroicons/react/24/outline';
 import Link from 'next/link';
 import {
   ResizableHandle,
@@ -12,6 +18,10 @@ import {
 import { useToast } from '@/components/ui/Toast';
 import { BuilderChat } from './BuilderChat';
 import { PreviewPane, type DeployStage } from './PreviewPane';
+import { VersionDropdown } from './VersionDropdown';
+import { DiffDrawer } from './DiffDrawer';
+import { AdaptModal } from './AdaptModal';
+import { AlignmentDrawer } from './AlignmentDrawer';
 
 interface BuilderShellProps {
   activityId: string;
@@ -44,6 +54,10 @@ export function BuilderShell({
   const [stage, setStage] = useState<DeployStage>('idle');
   const [errorMessage, setErrorMessage] = useState<string | undefined>();
   const [isMobile, setIsMobile] = useState(false);
+  const [diffOpen, setDiffOpen] = useState(false);
+  const [adaptOpen, setAdaptOpen] = useState(false);
+  const [alignmentOpen, setAlignmentOpen] = useState(false);
+  const [versionBump, setVersionBump] = useState(0);
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
@@ -66,8 +80,22 @@ export function BuilderShell({
     if (newSandboxUrl) {
       setSandboxUrl(newSandboxUrl);
     }
+    setVersionBump((b) => b + 1);
     onCodeUpdate?.(newCode, newSandboxUrl);
     toast.success('Activity updated', 'Sandbox refreshed with the new code.');
+  };
+
+  const handleVersionRestore = ({ code, sandbox_url }: { code: string; sandbox_url?: string }) => {
+    if (sandbox_url) setSandboxUrl(sandbox_url);
+    setVersionBump((b) => b + 1);
+    onCodeUpdate?.(code, sandbox_url);
+    toast.info('Version restored', 'The previous version is now live.');
+  };
+
+  const handleAdapted = (data: { activity_id: string; sandbox_url?: string }) => {
+    if (data.activity_id) {
+      window.location.href = `/activity?id=${data.activity_id}`;
+    }
   };
 
   const handleError = (message: string) => {
@@ -76,7 +104,7 @@ export function BuilderShell({
   };
 
   const Header = (
-    <div className="flex items-center justify-between gap-3 px-1 pb-3">
+    <div className="flex items-center justify-between gap-3 px-1 pb-3 flex-wrap">
       <div className="flex items-center gap-2 min-w-0">
         <Link href="/dashboard" className="flex-shrink-0">
           <button className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--card-border)] bg-white text-xs font-medium text-[var(--foreground-muted)] hover:text-foreground hover:border-primary/40 transition-colors">
@@ -93,16 +121,52 @@ export function BuilderShell({
           </p>
         </div>
       </div>
-      {onExitToForm && (
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <VersionDropdown
+          key={`vd-${versionBump}`}
+          activityId={activityId}
+          studentId={studentId}
+          onRestore={handleVersionRestore}
+        />
         <button
           type="button"
-          onClick={onExitToForm}
-          className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-primary to-primary-dark text-white text-xs font-semibold hover:shadow-md hover:shadow-primary/25 transition-all"
+          onClick={() => setDiffOpen(true)}
+          title="Compare versions"
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--card-border)] bg-white text-xs font-medium text-[var(--foreground-muted)] hover:text-foreground hover:border-primary/40"
         >
-          <BoltIcon className="w-3.5 h-3.5" />
-          New activity
+          <ArrowsRightLeftIcon className="w-3.5 h-3.5" />
+          Diff
         </button>
-      )}
+        <button
+          type="button"
+          onClick={() => setAlignmentOpen(true)}
+          disabled={!studentId}
+          title={studentId ? 'Check alignment' : 'Select a student first'}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--card-border)] bg-white text-xs font-medium text-[var(--foreground-muted)] hover:text-foreground hover:border-primary/40 disabled:opacity-50"
+        >
+          <AcademicCapIcon className="w-3.5 h-3.5" />
+          Align
+        </button>
+        <button
+          type="button"
+          onClick={() => setAdaptOpen(true)}
+          title="Adapt for another student"
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--card-border)] bg-white text-xs font-medium text-[var(--foreground-muted)] hover:text-foreground hover:border-primary/40"
+        >
+          <UserGroupIcon className="w-3.5 h-3.5" />
+          Adapt
+        </button>
+        {onExitToForm && (
+          <button
+            type="button"
+            onClick={onExitToForm}
+            className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-primary to-primary-dark text-white text-xs font-semibold hover:shadow-md hover:shadow-primary/25 transition-all"
+          >
+            <BoltIcon className="w-3.5 h-3.5" />
+            New
+          </button>
+        )}
+      </div>
     </div>
   );
 
@@ -121,6 +185,9 @@ export function BuilderShell({
               status={deploymentStatus}
               stage={stage}
               errorMessage={errorMessage}
+              activityId={activityId}
+              studentId={studentId}
+              tutorId={tutorId}
             />
           </div>
           <div className="flex-1 min-h-[280px]">
@@ -169,11 +236,30 @@ export function BuilderShell({
                 status={deploymentStatus}
                 stage={stage}
                 errorMessage={errorMessage}
+                activityId={activityId}
+                studentId={studentId}
+                tutorId={tutorId}
               />
             </div>
           </ResizablePanel>
         </ResizablePanelGroup>
       </div>
+
+      <DiffDrawer activityId={activityId} open={diffOpen} onClose={() => setDiffOpen(false)} />
+      <AdaptModal
+        open={adaptOpen}
+        onClose={() => setAdaptOpen(false)}
+        sourceActivityId={activityId}
+        tutorId={tutorId}
+        currentStudentId={studentId}
+        onAdapted={handleAdapted}
+      />
+      <AlignmentDrawer
+        open={alignmentOpen}
+        onClose={() => setAlignmentOpen(false)}
+        activityId={activityId}
+        studentId={studentId}
+      />
     </motion.div>
   );
 }

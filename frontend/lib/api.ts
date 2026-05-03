@@ -230,4 +230,253 @@ export const activityApi = {
   },
 };
 
+// ─── Saved prompts (Tier 1.2) ────────────────────────────────────────────────
+export interface SavedPrompt {
+  id: string;
+  tutor_id: string;
+  label: string;
+  prompt: string;
+  use_count: number;
+  last_used_at?: string;
+  created_at: string;
+}
+
+export const tutorApi = {
+  listSavedPrompts: async (tutorId: string): Promise<SavedPrompt[]> => {
+    const res = await api.get(`/api/v1/tutor/${tutorId}/saved-prompts`);
+    return res.data?.prompts ?? [];
+  },
+  createSavedPrompt: async (
+    tutorId: string,
+    data: { label: string; prompt: string }
+  ): Promise<SavedPrompt> => {
+    const res = await api.post(`/api/v1/tutor/${tutorId}/saved-prompts`, data);
+    return res.data?.prompt;
+  },
+  updateSavedPrompt: async (
+    id: string,
+    data: { label?: string; prompt?: string }
+  ): Promise<SavedPrompt> => {
+    const res = await api.patch(`/api/v1/tutor/saved-prompts/${id}`, data);
+    return res.data?.prompt;
+  },
+  deleteSavedPrompt: async (id: string): Promise<void> => {
+    await api.delete(`/api/v1/tutor/saved-prompts/${id}`);
+  },
+  recordSavedPromptUse: async (id: string): Promise<void> => {
+    await api.post(`/api/v1/tutor/saved-prompts/${id}/use`);
+  },
+};
+
+// ─── Voice transcription (Tier 1.3) ───────────────────────────────────────────
+export const transcribeApi = {
+  transcribe: async (audioBlob: Blob): Promise<string> => {
+    const form = new FormData();
+    form.append('audio', audioBlob, 'audio.webm');
+    const res = await fetch(`${API_URL}/api/v1/transcribe`, {
+      method: 'POST',
+      body: form,
+    });
+    if (!res.ok) throw new Error(`Transcribe failed: ${res.status}`);
+    const data = await res.json();
+    return data.text || '';
+  },
+};
+
+// ─── Sessions (Tier 2.2) ──────────────────────────────────────────────────────
+export interface ActivitySessionEvent {
+  kind: string;
+  payload?: any;
+  ts?: string;
+}
+
+export interface ActivitySession {
+  id: string;
+  activity_id: string;
+  student_id?: string;
+  tutor_id?: string;
+  started_at: string;
+  ended_at?: string;
+  duration_seconds?: number;
+  ai_summary?: string;
+  ai_misconceptions?: any[];
+  ai_strengths?: any[];
+}
+
+export const sessionApi = {
+  start: async (data: {
+    activity_id: string;
+    student_id?: string;
+    tutor_id?: string;
+  }): Promise<ActivitySession> => {
+    const res = await api.post('/api/v1/sessions', data);
+    return res.data?.session;
+  },
+  pushEvents: async (sessionId: string, events: ActivitySessionEvent[]): Promise<void> => {
+    await api.post(`/api/v1/sessions/${sessionId}/events`, { events });
+  },
+  end: async (sessionId: string): Promise<ActivitySession> => {
+    const res = await api.post(`/api/v1/sessions/${sessionId}/end`);
+    return res.data?.session;
+  },
+  get: async (sessionId: string): Promise<{ session: ActivitySession; events: any[] }> => {
+    const res = await api.get(`/api/v1/sessions/${sessionId}`);
+    return res.data;
+  },
+  listForActivity: async (activityId: string): Promise<ActivitySession[]> => {
+    const res = await api.get(`/api/v1/activities/${activityId}/sessions`);
+    return res.data?.sessions ?? [];
+  },
+  listForStudent: async (studentId: string): Promise<ActivitySession[]> => {
+    const res = await api.get(`/api/v1/students/${studentId}/sessions`);
+    return res.data?.sessions ?? [];
+  },
+  analytics: async (activityId: string): Promise<any> => {
+    const res = await api.get(`/api/v1/activities/${activityId}/analytics`);
+    return res.data;
+  },
+};
+
+// ─── Versions (Tier 3.4) ──────────────────────────────────────────────────────
+export interface ActivityVersion {
+  id: string;
+  activity_id: string;
+  version_number: number;
+  label?: string;
+  code: string;
+  sandbox_url?: string;
+  pinned_for_student_id?: string;
+  created_at: string;
+}
+
+export const versionsApi = {
+  list: async (activityId: string): Promise<ActivityVersion[]> => {
+    const res = await api.get(`/api/v1/activity/${activityId}/versions`);
+    return res.data?.versions ?? [];
+  },
+  label: async (id: string, label: string): Promise<ActivityVersion> => {
+    const res = await api.patch(`/api/v1/activity/versions/${id}`, { label });
+    return res.data?.version;
+  },
+  pin: async (id: string, studentId: string | null): Promise<ActivityVersion> => {
+    const res = await api.post(`/api/v1/activity/versions/${id}/pin`, {
+      student_id: studentId,
+    });
+    return res.data?.version;
+  },
+  restore: async (
+    id: string
+  ): Promise<{ activity_id: string; sandbox_url?: string; code: string }> => {
+    const res = await api.post(`/api/v1/activity/versions/${id}/restore`);
+    return res.data;
+  },
+};
+
+// ─── Insights (Tier 3.1) ──────────────────────────────────────────────────────
+export interface StudentInsight {
+  id: string;
+  student_id: string;
+  generated_at: string;
+  kind: 'misconception' | 'strength' | 'engagement' | string;
+  topic?: string;
+  evidence?: any[];
+  recommended_action?: string;
+  dismissed: boolean;
+}
+
+export const insightsApi = {
+  list: async (studentId: string): Promise<StudentInsight[]> => {
+    const res = await api.get(`/api/v1/students/${studentId}/insights`);
+    return res.data?.insights ?? [];
+  },
+  generate: async (studentId: string): Promise<StudentInsight[]> => {
+    const res = await api.post(`/api/v1/students/${studentId}/insights/generate`);
+    return res.data?.insights ?? [];
+  },
+  dismiss: async (id: string): Promise<void> => {
+    await api.post(`/api/v1/insights/${id}/dismiss`);
+  },
+};
+
+// ─── Recap (Tier 3.2) ─────────────────────────────────────────────────────────
+export const recapApi = {
+  generate: async (data: {
+    student_id: string;
+    from_date: string;
+    to_date: string;
+    tone?: 'warm' | 'concise';
+  }): Promise<{ subject: string; body: string }> => {
+    const res = await api.post(`/api/v1/students/${data.student_id}/recap`, data);
+    return res.data;
+  },
+};
+
+// ─── Adapt (Tier 2.3) ─────────────────────────────────────────────────────────
+export const adaptApi = {
+  adapt: async (data: {
+    source_activity_id: string;
+    target_student_id: string;
+    tutor_id: string;
+  }): Promise<{ activity_id: string; sandbox_url?: string }> => {
+    const res = await api.post('/api/v1/agents/activity/adapt', data);
+    return res.data;
+  },
+};
+
+// ─── Alignment (Tier 3.3) ─────────────────────────────────────────────────────
+export interface AlignmentCheck {
+  axis: 'age' | 'objectives' | 'standard';
+  status: 'pass' | 'warn' | 'fail';
+  reasoning: string;
+}
+
+export const alignmentApi = {
+  check: async (
+    activityId: string,
+    data: {
+      student_id: string;
+      standard_id?: string;
+    },
+    onEvent: (evt: AlignmentCheck) => void,
+    signal?: AbortSignal
+  ): Promise<void> => {
+    const res = await fetch(`${API_URL}/api/v1/activity/${activityId}/check-alignment`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      body: JSON.stringify(data),
+      signal,
+    });
+    if (!res.ok || !res.body) throw new Error(`Alignment failed: ${res.status}`);
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buffer.indexOf('\n\n')) !== -1) {
+        const chunk = buffer.slice(0, idx).trim();
+        buffer = buffer.slice(idx + 2);
+        if (!chunk) continue;
+        for (const line of chunk.split('\n')) {
+          if (!line.startsWith('data:')) continue;
+          try {
+            onEvent(JSON.parse(line.slice(5).trim()));
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    }
+  },
+  listStandards: async (): Promise<
+    { id: string; code: string; framework: string; description: string }[]
+  > => {
+    const res = await api.get('/api/v1/curriculum-standards');
+    return res.data?.standards ?? [];
+  },
+};
+
 export type { StrategyResponse, LessonResponse, ActivityResponse };

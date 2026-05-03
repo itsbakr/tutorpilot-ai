@@ -10,13 +10,16 @@ import {
   ArrowUpIcon,
   CheckIcon,
   ClipboardDocumentIcon,
+  MicrophoneIcon,
   SparklesIcon,
   StopIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
-import { activityApi, type ActivityChatStreamEvent } from '@/lib/api';
+import { activityApi, transcribeApi, type ActivityChatStreamEvent } from '@/lib/api';
 import type { ActivityChatMessage } from '@/lib/types';
 import { QuickActions } from './QuickActions';
+import { AdjustmentDial } from './AdjustmentDial';
+import { SavedPromptsBar } from './SavedPromptsBar';
 import type { DeployStage } from './PreviewPane';
 
 interface BuilderChatProps {
@@ -69,11 +72,54 @@ export function BuilderChat({
   const [streaming, setStreaming] = useState(false);
   const [activeStage, setActiveStage] = useState<DeployStage>('idle');
   const [showScrollButton, setShowScrollButton] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
 
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recorderChunksRef = useRef<Blob[]>([]);
+
+  const startRecording = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      recorderChunksRef.current = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) recorderChunksRef.current.push(e.data);
+      };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(recorderChunksRef.current, { type: 'audio/webm' });
+        if (blob.size === 0) return;
+        setTranscribing(true);
+        try {
+          const text = await transcribeApi.transcribe(blob);
+          if (text) {
+            setInput((prev) => (prev.trim() ? prev + ' ' + text : text));
+            textareaRef.current?.focus();
+          }
+        } catch (err) {
+          console.error('Transcription failed', err);
+        } finally {
+          setTranscribing(false);
+        }
+      };
+      recorder.start();
+      recorderRef.current = recorder;
+      setRecording(true);
+    } catch (err) {
+      console.error('Mic access denied', err);
+    }
+  }, []);
+
+  const stopRecording = useCallback(() => {
+    recorderRef.current?.stop();
+    recorderRef.current = null;
+    setRecording(false);
+  }, []);
 
   // Load chat history
   useEffect(() => {
@@ -339,6 +385,17 @@ export function BuilderChat({
           disabled={streaming}
         />
 
+        <div className="flex items-center gap-2 flex-wrap">
+          <AdjustmentDial onApply={(prompt) => sendMessage(prompt)} disabled={streaming} />
+          <span className="text-[var(--card-border)]">·</span>
+          <SavedPromptsBar
+            tutorId={tutorId}
+            draftPrompt={input}
+            onPick={(prompt) => sendMessage(prompt)}
+            disabled={streaming}
+          />
+        </div>
+
         <form onSubmit={handleSubmit} className="flex items-end gap-2">
           <div className="flex-1 relative">
             <textarea
@@ -366,6 +423,33 @@ export function BuilderChat({
               </button>
             )}
           </div>
+
+          {/* Mic */}
+          <button
+            type="button"
+            onClick={recording ? stopRecording : startRecording}
+            disabled={streaming || transcribing}
+            className={`
+              flex-shrink-0 inline-flex items-center justify-center w-10 h-10 rounded-xl border transition-all
+              ${
+                recording
+                  ? 'border-red-300 bg-red-50 text-red-600 animate-pulse'
+                  : transcribing
+                  ? 'border-[var(--card-border)] bg-[var(--background-secondary)] text-[var(--foreground-muted)]'
+                  : 'border-[var(--card-border)] bg-white text-[var(--foreground-muted)] hover:text-primary hover:border-primary/40'
+              }
+              ${streaming || transcribing ? 'opacity-60 cursor-not-allowed' : ''}
+            `}
+            title={
+              recording
+                ? 'Stop recording'
+                : transcribing
+                ? 'Transcribing…'
+                : 'Voice input (transcribes to text)'
+            }
+          >
+            <MicrophoneIcon className="w-4 h-4" />
+          </button>
 
           {streaming ? (
             <button

@@ -18,6 +18,7 @@ import {
   CalendarIcon,
   ChartBarIcon,
   DocumentTextIcon,
+  EnvelopeIcon,
   FunnelIcon,
   GlobeAltIcon,
   HeartIcon,
@@ -29,6 +30,8 @@ import {
   TrashIcon,
   UserIcon,
 } from '@heroicons/react/24/outline';
+import { StudentInsightsPanel } from '@/components/students/StudentInsightsPanel';
+import { RecapModal } from '@/components/students/RecapModal';
 import { StarIcon } from '@heroicons/react/24/solid';
 
 interface Student {
@@ -63,6 +66,7 @@ export default function StudentDetailPage() {
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [recapOpen, setRecapOpen] = useState(false);
   const [typeFilter, setTypeFilter] = useState<'all' | 'strategy' | 'lesson' | 'activity'>('all');
 
   const studentId = params.id as string;
@@ -170,6 +174,13 @@ export default function StudentDetailPage() {
             </div>
 
             <div className="flex items-center gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => setRecapOpen(true)}
+                leftIcon={<EnvelopeIcon className="w-4 h-4" />}
+              >
+                Parent recap
+              </Button>
               <Link href={`/students/${studentId}/edit`}>
                 <Button variant="secondary" leftIcon={<PencilSquareIcon className="w-4 h-4" />}>
                   Edit
@@ -223,6 +234,9 @@ export default function StudentDetailPage() {
             </Link>
           </div>
         </div>
+
+        {/* Insights panel */}
+        <StudentInsightsPanel studentId={studentId} />
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left: Profile */}
@@ -441,6 +455,12 @@ export default function StudentDetailPage() {
         confirmText={deleting ? 'Deleting...' : 'Delete'}
         variant="danger"
         loading={deleting}
+      />
+      <RecapModal
+        open={recapOpen}
+        onClose={() => setRecapOpen(false)}
+        studentId={studentId}
+        studentName={student.name}
       />
     </AppShell>
   );

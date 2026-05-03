@@ -1,17 +1,23 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
+  AcademicCapIcon,
   ArrowPathIcon,
   ArrowsPointingOutIcon,
   ArrowsPointingInIcon,
   ArrowTopRightOnSquareIcon,
   CheckCircleIcon,
+  ChartBarIcon,
   ExclamationCircleIcon,
+  EyeIcon,
   GlobeAltIcon,
   SparklesIcon,
+  StopIcon,
 } from '@heroicons/react/24/outline';
+import { sessionApi, type ActivitySession } from '@/lib/api';
+import { SessionsAnalytics } from './SessionsAnalytics';
 
 export type DeployStage =
   | 'idle'
@@ -22,11 +28,16 @@ export type DeployStage =
   | 'ready'
   | 'error';
 
+type ViewRole = 'tutor' | 'student';
+
 interface PreviewPaneProps {
   sandboxUrl?: string;
   status?: 'success' | 'failed' | string;
   stage?: DeployStage;
   errorMessage?: string;
+  activityId?: string;
+  studentId?: string;
+  tutorId?: string;
 }
 
 const stageMeta: Record<
@@ -44,14 +55,118 @@ export function PreviewPane({
   status,
   stage = 'idle',
   errorMessage,
+  activityId,
+  studentId,
+  tutorId,
 }: PreviewPaneProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
+  const [view, setView] = useState<ViewRole>('tutor');
+  const [tab, setTab] = useState<'preview' | 'sessions'>('preview');
+  const [activeSession, setActiveSession] = useState<ActivitySession | null>(null);
+  const [sessionElapsed, setSessionElapsed] = useState(0);
+  const eventBufferRef = useRef<{ kind: string; payload?: any }[]>([]);
+  const flushTimerRef = useRef<number | null>(null);
 
   const isWorking =
     stage === 'thinking' || stage === 'editing' || stage === 'debugging' || stage === 'deploying';
   const showOverlay = isWorking;
+
+  const previewSrc = useMemo(() => {
+    if (!sandboxUrl) return '';
+    try {
+      const u = new URL(sandboxUrl);
+      u.searchParams.set('role', view);
+      if (activeSession?.id) u.searchParams.set('session', activeSession.id);
+      return u.toString();
+    } catch {
+      return sandboxUrl;
+    }
+  }, [sandboxUrl, view, activeSession?.id]);
+
+  // Session timer
+  useEffect(() => {
+    if (!activeSession) return;
+    const t = window.setInterval(() => {
+      setSessionElapsed((e) => e + 1);
+    }, 1000);
+    return () => window.clearInterval(t);
+  }, [activeSession]);
+
+  // Flush event buffer to the API
+  const flushEvents = useCallback(async () => {
+    if (!activeSession?.id) return;
+    const buffered = eventBufferRef.current;
+    if (buffered.length === 0) return;
+    eventBufferRef.current = [];
+    try {
+      await sessionApi.pushEvents(activeSession.id, buffered);
+    } catch (err) {
+      console.error('Failed to push events', err);
+      eventBufferRef.current = buffered.concat(eventBufferRef.current);
+    }
+  }, [activeSession?.id]);
+
+  useEffect(() => {
+    if (!activeSession) return;
+    const id = window.setInterval(flushEvents, 5000);
+    flushTimerRef.current = id;
+    const onUnload = () => flushEvents();
+    window.addEventListener('beforeunload', onUnload);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener('beforeunload', onUnload);
+    };
+  }, [activeSession, flushEvents]);
+
+  // Listen for postMessage events from the sandbox
+  useEffect(() => {
+    if (!activeSession) return;
+    const handler = (e: MessageEvent) => {
+      const data = e.data;
+      if (!data || typeof data !== 'object') return;
+      if (data.type !== 'tutorpilot:event') return;
+      eventBufferRef.current.push({
+        kind: data.kind || 'custom',
+        payload: data.payload || {},
+      });
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, [activeSession]);
+
+  // Start/stop a session when the user toggles to student view
+  const handleViewChange = useCallback(
+    async (next: ViewRole) => {
+      if (next === view) return;
+      if (next === 'student' && !activeSession && activityId) {
+        try {
+          const s = await sessionApi.start({
+            activity_id: activityId,
+            student_id: studentId,
+            tutor_id: tutorId,
+          });
+          setActiveSession(s);
+          setSessionElapsed(0);
+        } catch (err) {
+          console.error('Failed to start session', err);
+        }
+      }
+      if (next === 'tutor' && activeSession) {
+        await flushEvents();
+        try {
+          await sessionApi.end(activeSession.id);
+        } catch (err) {
+          console.error('Failed to end session', err);
+        }
+        setActiveSession(null);
+      }
+      setView(next);
+      setReloadKey((k) => k + 1);
+    },
+    [view, activeSession, activityId, studentId, tutorId, flushEvents]
+  );
 
   useEffect(() => {
     if (!fullscreen) return;
@@ -105,6 +220,40 @@ export function PreviewPane({
         </div>
 
         <div className="flex items-center gap-1">
+          {/* View role toggle */}
+          {sandboxUrl && (
+            <div className="flex items-center mr-1 rounded-lg border border-[var(--card-border)] overflow-hidden">
+              <button
+                onClick={() => handleViewChange('tutor')}
+                className={`px-2 py-1 text-[11px] font-medium transition-colors ${
+                  view === 'tutor'
+                    ? 'bg-primary text-white'
+                    : 'bg-white text-[var(--foreground-muted)] hover:text-foreground'
+                }`}
+                title="Tutor view (debug controls visible)"
+              >
+                Tutor
+              </button>
+              <button
+                onClick={() => handleViewChange('student')}
+                className={`px-2 py-1 text-[11px] font-medium transition-colors flex items-center gap-1 ${
+                  view === 'student'
+                    ? 'bg-primary text-white'
+                    : 'bg-white text-[var(--foreground-muted)] hover:text-foreground'
+                }`}
+                title="Student view (records a session)"
+              >
+                <EyeIcon className="w-3 h-3" />
+                Student
+                {activeSession && (
+                  <span className="text-[10px] font-mono bg-white/20 px-1 rounded">
+                    {Math.floor(sessionElapsed / 60)}:
+                    {String(sessionElapsed % 60).padStart(2, '0')}
+                  </span>
+                )}
+              </button>
+            </div>
+          )}
           <button
             onClick={handleReload}
             disabled={!sandboxUrl}
@@ -139,8 +288,24 @@ export function PreviewPane({
         </div>
       </div>
 
+      {/* Tabs */}
+      {activityId && (
+        <div className="flex items-center gap-1 px-3 pt-2 border-b border-[var(--card-border)] bg-white">
+          <TabButton active={tab === 'preview'} onClick={() => setTab('preview')} icon={<EyeIcon className="w-3.5 h-3.5" />}>
+            Preview
+          </TabButton>
+          <TabButton active={tab === 'sessions'} onClick={() => setTab('sessions')} icon={<ChartBarIcon className="w-3.5 h-3.5" />}>
+            Sessions
+          </TabButton>
+        </div>
+      )}
+
       {/* Body */}
       <div className="relative flex-1 bg-[var(--background-secondary)]">
+        {tab === 'sessions' && activityId ? (
+          <SessionsAnalytics activityId={activityId} />
+        ) : (
+          <>
         {/* Animated edge glow during deploy */}
         <AnimatePresence>
           {isWorking && (
@@ -157,11 +322,26 @@ export function PreviewPane({
           )}
         </AnimatePresence>
 
+        {/* Student-mode banner */}
+        {view === 'student' && sandboxUrl && (
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-3 py-1 rounded-full bg-foreground/90 text-white text-[11px] font-medium shadow-lg backdrop-blur">
+            <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
+            Recording student session
+            <button
+              type="button"
+              onClick={() => handleViewChange('tutor')}
+              className="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-white/20 hover:bg-white/30"
+            >
+              <StopIcon className="w-3 h-3" /> End
+            </button>
+          </div>
+        )}
+
         {sandboxUrl ? (
           <iframe
             key={reloadKey}
             ref={iframeRef}
-            src={sandboxUrl}
+            src={previewSrc}
             className="w-full h-full border-0 bg-white"
             title="Activity Sandbox"
             sandbox="allow-scripts allow-same-origin allow-forms"
@@ -208,8 +388,40 @@ export function PreviewPane({
             </motion.div>
           )}
         </AnimatePresence>
+          </>
+        )}
       </div>
     </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  icon,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`
+        inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border-b-2 -mb-px transition-colors
+        ${
+          active
+            ? 'border-primary text-primary'
+            : 'border-transparent text-[var(--foreground-muted)] hover:text-foreground'
+        }
+      `}
+    >
+      {icon}
+      {children}
+    </button>
   );
 }
 
