@@ -46,11 +46,19 @@ async def lifespan(app: FastAPI):
     print("🚀 TutorPilot backend starting...")
     print(f"📊 Weave tracing enabled: {os.getenv('WEAVE_PROJECT_NAME')}")
     print(f"🔐 Auth enabled: Supabase")
-    
+
+    from services import scheduler_service
+    scheduler_service.start()
+
     yield
-    
+
     # Shutdown
     print("👋 TutorPilot backend shutting down...")
+    try:
+        from services import scheduler_service
+        await scheduler_service.stop()
+    except Exception as e:
+        print(f"scheduler_service stop failed: {e}")
 
 
 app = FastAPI(
@@ -1401,6 +1409,618 @@ async def decide_memory_proposal(proposal_id: str, request: MemoryProposalDecisi
         return {"success": True, "proposal_id": proposal_id, "decision": request.decision}
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==========================================
+# TUTOR AI TOOLKIT — 9 NEW AGENTS
+# ==========================================
+
+from services import notification_service
+from agents.standards_aligner import (
+    align_lesson_to_standards,
+    get_lesson_standards,
+    student_standards_coverage,
+)
+from agents.briefing_agent import generate_briefing, acknowledge_briefing
+from agents.voice_memo_agent import process_voice_memo
+from agents.homework_generator import generate_homework as run_homework_generator
+from agents.homework_checker import check_homework as run_homework_checker, HOMEWORK_BUCKET
+from agents.misconception_detector import detect_misconceptions as run_misconception_detector
+from agents.difficulty_calibrator import calibrate_difficulty as run_calibrator
+from agents.language_adapter import adapt_lesson as run_language_adapter
+from agents.integrity_check import check_submission_integrity
+
+HOMEWORK_PHOTO_MIMES = {
+    "image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif",
+}
+VOICE_MEMO_MIMES = {
+    "audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav",
+    "audio/mp4", "audio/m4a", "audio/x-m4a",
+    "audio/webm", "audio/ogg", "audio/flac",
+}
+
+
+# ---- Pydantic request models ----
+
+class TutorPreferencesUpdate(BaseModel):
+    timezone: Optional[str] = None
+    working_hours: Optional[Dict[str, Any]] = None
+    preferred_language: Optional[str] = None
+    comm_preferences: Optional[Dict[str, Any]] = None
+
+
+class BriefingRequest(BaseModel):
+    student_id: str
+    tutor_id: str
+    upcoming_lesson_id: Optional[str] = None
+
+
+class HomeworkGenerateRequest(BaseModel):
+    student_id: str
+    tutor_id: str
+    lesson_id: Optional[str] = None
+    format: str = "problem_set"
+    item_count: int = 5
+    difficulty_target: Optional[int] = None
+    title: Optional[str] = None
+    due_at: Optional[str] = None
+    estimated_duration_minutes: int = 20
+    focus_standard_code: Optional[str] = None
+
+
+class HomeworkSubmissionTyped(BaseModel):
+    typed_answers: Dict[str, Any]
+
+
+class LanguageAdaptRequest(BaseModel):
+    target_language: str
+    scope: str = "difficult_only"     # "difficult_only" | "full"
+    add_glossary: bool = True
+    tutor_id: Optional[str] = None
+
+
+# ==========================================
+# Notifications
+# ==========================================
+
+@app.get("/api/v1/notifications")
+async def list_notifications(
+    tutor_id: str,
+    unread_only: bool = False,
+    limit: int = 50,
+):
+    try:
+        if unread_only:
+            data = await notification_service.list_unread(tutor_id)
+        else:
+            data = await notification_service.list_for_tutor(tutor_id, limit=limit)
+        unread_count = sum(1 for n in data if not n.get("read_at"))
+        return {"success": True, "notifications": data, "unread_count": unread_count}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/notifications/{notification_id}/read")
+async def mark_notification_read(notification_id: str):
+    try:
+        await notification_service.mark_read(notification_id)
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/notifications/read-all")
+async def mark_all_notifications_read(tutor_id: str):
+    try:
+        n = await notification_service.mark_all_read(tutor_id)
+        return {"success": True, "updated": n}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==========================================
+# Tutor preferences
+# ==========================================
+
+@app.patch("/api/v1/tutors/{tutor_id}/preferences")
+async def update_tutor_preferences(tutor_id: str, patch: TutorPreferencesUpdate):
+    try:
+        update: Dict[str, Any] = {}
+        for field in ("timezone", "working_hours", "preferred_language", "comm_preferences"):
+            v = getattr(patch, field)
+            if v is not None:
+                update[field] = v
+        if not update:
+            return {"success": True, "updated": 0}
+        supabase.table("tutors").update(update).eq("id", tutor_id).execute()
+        return {"success": True, "updated": len(update)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==========================================
+# Phase 1 — Standards
+# ==========================================
+
+@app.get("/api/v1/lessons/{lesson_id}/standards")
+async def get_standards_for_lesson(lesson_id: str):
+    try:
+        return {"success": True, "standards": await get_lesson_standards(lesson_id)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/lessons/{lesson_id}/standards/realign")
+async def realign_lesson_standards(lesson_id: str, background_tasks: BackgroundTasks):
+    try:
+        async def _run():
+            try:
+                await align_lesson_to_standards(lesson_id)
+            except Exception as e:
+                print(f"realign failed: {e}")
+        background_tasks.add_task(_run)
+        return {"success": True, "lesson_id": lesson_id, "status": "queued"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/students/{student_id}/standards-coverage")
+async def get_student_standards_coverage(student_id: str):
+    try:
+        return {"success": True, **(await student_standards_coverage(student_id))}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==========================================
+# Phase 2 — Briefings
+# ==========================================
+
+@app.post("/api/v1/briefings/generate")
+async def briefings_generate(request: BriefingRequest):
+    try:
+        result = await generate_briefing(
+            student_id=request.student_id,
+            tutor_id=request.tutor_id,
+            upcoming_lesson_id=request.upcoming_lesson_id,
+        )
+        return {"success": True, **result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/students/{student_id}/briefings")
+async def list_briefings(student_id: str):
+    try:
+        res = supabase.table("pre_session_briefings") \
+            .select("*") \
+            .eq("student_id", student_id) \
+            .order("generated_at", desc=True) \
+            .limit(20) \
+            .execute()
+        return {"success": True, "briefings": res.data or []}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/briefings/{briefing_id}")
+async def get_briefing(briefing_id: str):
+    try:
+        res = supabase.table("pre_session_briefings").select("*").eq("id", briefing_id).limit(1).execute()
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Briefing not found")
+        return {"success": True, "briefing": res.data[0]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/briefings/{briefing_id}/acknowledge")
+async def briefings_acknowledge(briefing_id: str):
+    try:
+        await acknowledge_briefing(briefing_id)
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==========================================
+# Phase 3 — Voice memos
+# ==========================================
+
+@app.post("/api/v1/voice-memos/upload")
+async def upload_voice_memo(
+    background_tasks: BackgroundTasks,
+    tutor_id: str = Form(...),
+    student_id: Optional[str] = Form(None),
+    duration_seconds: Optional[int] = Form(None),
+    file: UploadFile = File(...),
+):
+    try:
+        if file.content_type and file.content_type not in VOICE_MEMO_MIMES:
+            raise HTTPException(status_code=400, detail=f"Unsupported audio type: {file.content_type}")
+        body = await file.read()
+        if not body:
+            raise HTTPException(status_code=400, detail="Empty audio file")
+
+        from uuid import uuid4 as _uuid4
+        memo_id = str(_uuid4())
+        ext = (file.filename or "").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "bin"
+        storage_path = f"{tutor_id}/memos/{memo_id}.{ext}"
+
+        from services.transcription_service import SUPABASE_STORAGE_BUCKET
+        await asyncio.to_thread(
+            lambda: supabase.storage.from_(SUPABASE_STORAGE_BUCKET).upload(
+                storage_path, body, {"content-type": file.content_type or "application/octet-stream"},
+            )
+        )
+
+        supabase.table("voice_memos").insert({
+            "id": memo_id,
+            "tutor_id": tutor_id,
+            "student_id": student_id,
+            "media_url": storage_path,
+            "duration_seconds": duration_seconds,
+            "status": "pending",
+            "created_at": datetime.now().isoformat(),
+        }).execute()
+
+        async def _run():
+            try:
+                result = await process_voice_memo(memo_id)
+                # Notify the tutor with summary counts
+                applied = result.get("applied") or {}
+                await notification_service.create(
+                    recipient_tutor_id=tutor_id,
+                    category="voice_memo_processed",
+                    title="Voice memo processed",
+                    body=f"{applied.get('auto_written',0)} auto-saved · {applied.get('staged',0)} pending review",
+                    link=f"/students/{student_id}" if student_id else "/today",
+                    priority="normal",
+                    payload={"memo_id": memo_id, **applied},
+                )
+            except Exception as e:
+                print(f"voice memo processing failed: {e}")
+
+        background_tasks.add_task(_run)
+        return {"success": True, "memo_id": memo_id, "status": "pending"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/voice-memos/{memo_id}")
+async def get_voice_memo(memo_id: str):
+    try:
+        res = supabase.table("voice_memos").select("*").eq("id", memo_id).limit(1).execute()
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Memo not found")
+        return {"success": True, "memo": res.data[0]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==========================================
+# Phase 4+8 — Homework
+# ==========================================
+
+@app.post("/api/v1/agents/homework-generator")
+async def homework_generate(request: HomeworkGenerateRequest):
+    try:
+        result = await run_homework_generator(
+            student_id=request.student_id,
+            tutor_id=request.tutor_id,
+            lesson_id=request.lesson_id,
+            format=request.format,
+            item_count=request.item_count,
+            difficulty_target=request.difficulty_target,
+            title=request.title,
+            due_at=request.due_at,
+            estimated_duration_minutes=request.estimated_duration_minutes,
+            focus_standard_code=request.focus_standard_code,
+        )
+        return {"success": True, **result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/students/{student_id}/homework")
+async def list_homework(student_id: str):
+    try:
+        asgs = supabase.table("homework_assignments") \
+            .select("*") \
+            .eq("student_id", student_id) \
+            .order("created_at", desc=True) \
+            .execute()
+        rows = asgs.data or []
+        if rows:
+            ids = [r["id"] for r in rows]
+            subs = supabase.table("homework_submissions") \
+                .select("id, assignment_id, overall_score, graded_at, created_at") \
+                .in_("assignment_id", ids) \
+                .order("created_at", desc=True) \
+                .execute()
+            latest_by_asg: Dict[str, Dict[str, Any]] = {}
+            for s in (subs.data or []):
+                if s["assignment_id"] not in latest_by_asg:
+                    latest_by_asg[s["assignment_id"]] = s
+            for r in rows:
+                r["latest_submission"] = latest_by_asg.get(r["id"])
+        return {"success": True, "assignments": rows}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/homework/{assignment_id}")
+async def get_homework_assignment(assignment_id: str):
+    try:
+        res = supabase.table("homework_assignments").select("*").eq("id", assignment_id).limit(1).execute()
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Assignment not found")
+        subs = supabase.table("homework_submissions") \
+            .select("*") \
+            .eq("assignment_id", assignment_id) \
+            .order("created_at", desc=True) \
+            .execute()
+        return {"success": True, "assignment": res.data[0], "submissions": subs.data or []}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/homework/{assignment_id}/submit")
+async def homework_submit(
+    assignment_id: str,
+    background_tasks: BackgroundTasks,
+    typed_answers_json: Optional[str] = Form(None),
+    photos: Optional[List[UploadFile]] = File(None),
+):
+    """Mixed multipart: optional `typed_answers_json` field + optional `photos` files."""
+    try:
+        asg = supabase.table("homework_assignments").select("*").eq("id", assignment_id).limit(1).execute()
+        if not asg.data:
+            raise HTTPException(status_code=404, detail="Assignment not found")
+        assignment = asg.data[0]
+
+        typed: Optional[Dict[str, Any]] = None
+        if typed_answers_json:
+            try:
+                import json as _json
+                typed = _json.loads(typed_answers_json)
+                if not isinstance(typed, dict):
+                    raise ValueError("typed_answers_json must be a JSON object")
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Invalid typed_answers_json: {e}")
+
+        from uuid import uuid4 as _uuid4
+        submission_id = str(_uuid4())
+        media_urls: List[str] = []
+
+        if photos:
+            for idx, p in enumerate(photos):
+                if p.content_type and p.content_type not in HOMEWORK_PHOTO_MIMES:
+                    raise HTTPException(status_code=400, detail=f"Unsupported image type: {p.content_type}")
+                content = await p.read()
+                if not content:
+                    continue
+                ext = (p.filename or "").rsplit(".", 1)[-1].lower() if "." in (p.filename or "") else "jpg"
+                path = f"{assignment['student_id']}/{assignment_id}/{submission_id}-{idx}.{ext}"
+                await asyncio.to_thread(
+                    lambda c=content, ct=p.content_type, ph=path: supabase.storage.from_(HOMEWORK_BUCKET).upload(
+                        ph, c, {"content-type": ct or "image/jpeg"},
+                    )
+                )
+                media_urls.append(path)
+
+        if not media_urls and not typed:
+            raise HTTPException(status_code=400, detail="Submission must include photos or typed_answers_json")
+
+        sub_type = "mixed" if (media_urls and typed) else ("photo" if media_urls else "typed")
+        supabase.table("homework_submissions").insert({
+            "id": submission_id,
+            "assignment_id": assignment_id,
+            "submission_type": sub_type,
+            "media_urls": media_urls,
+            "typed_answers": typed,
+            "created_at": datetime.now().isoformat(),
+        }).execute()
+        supabase.table("homework_assignments").update({"status": "submitted"}).eq("id", assignment_id).execute()
+
+        async def _run():
+            try:
+                result = await run_homework_checker(submission_id)
+                # Calibrate difficulty after each graded submission
+                try:
+                    await run_calibrator(assignment["student_id"])
+                except Exception as e:
+                    print(f"calibrator failed post-grade: {e}")
+                # Notify tutor that grading is done
+                await notification_service.create(
+                    recipient_tutor_id=assignment["tutor_id"],
+                    category="homework_graded",
+                    title=f"Homework graded — {result.get('overall_score',0):.0f}%",
+                    body=assignment.get("title"),
+                    link=f"/students/{assignment['student_id']}/homework/{assignment_id}",
+                    priority="normal",
+                    payload={"assignment_id": assignment_id, "submission_id": submission_id,
+                             "score": result.get("overall_score")},
+                )
+            except Exception as e:
+                print(f"homework grading failed: {e}")
+
+        background_tasks.add_task(_run)
+        return {"success": True, "submission_id": submission_id, "status": "submitted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/homework/submissions/{submission_id}")
+async def get_homework_submission(submission_id: str):
+    try:
+        res = supabase.table("homework_submissions").select("*").eq("id", submission_id).limit(1).execute()
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Submission not found")
+        return {"success": True, "submission": res.data[0]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/homework/submissions/{submission_id}/integrity-check")
+async def submission_integrity_check(submission_id: str):
+    try:
+        result = await check_submission_integrity(submission_id)
+        return {"success": True, "integrity": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==========================================
+# Phase 5 — Misconceptions
+# ==========================================
+
+@app.post("/api/v1/students/{student_id}/misconceptions/detect")
+async def trigger_misconception_detection(student_id: str, lookback_days: int = 30):
+    try:
+        result = await run_misconception_detector(student_id, lookback_days=lookback_days)
+        return {"success": True, **result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/students/{student_id}/misconceptions")
+async def list_misconceptions(student_id: str):
+    """List active persistent_misconception memory entries for a student."""
+    try:
+        res = supabase.table("platform_memory") \
+            .select("*") \
+            .eq("entity_type", "student") \
+            .eq("entity_id", student_id) \
+            .eq("memory_category", "persistent_misconception") \
+            .order("last_updated", desc=True) \
+            .execute()
+        return {"success": True, "misconceptions": res.data or []}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==========================================
+# Phase 6 — Difficulty calibration
+# ==========================================
+
+@app.post("/api/v1/students/{student_id}/difficulty/calibrate")
+async def trigger_calibration(student_id: str):
+    try:
+        result = await run_calibrator(student_id)
+        return {"success": True, **result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/students/{student_id}/difficulty")
+async def get_difficulty_band(student_id: str):
+    try:
+        res = supabase.table("platform_memory") \
+            .select("*") \
+            .eq("entity_type", "student") \
+            .eq("entity_id", student_id) \
+            .eq("memory_category", "difficulty_band") \
+            .eq("memory_key", "current") \
+            .limit(1) \
+            .execute()
+        return {"success": True, "band": (res.data[0] if res.data else None)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==========================================
+# Phase 7 — Language adapter
+# ==========================================
+
+@app.post("/api/v1/lessons/{lesson_id}/adapt-language")
+async def adapt_lesson_language(lesson_id: str, request: LanguageAdaptRequest):
+    try:
+        if request.scope not in ("difficult_only", "full"):
+            raise HTTPException(status_code=400, detail="scope must be 'difficult_only' or 'full'")
+        result = await run_language_adapter(
+            lesson_id=lesson_id,
+            target_language=request.target_language,
+            scope=request.scope,
+            add_glossary=request.add_glossary,
+            tutor_id=request.tutor_id,
+        )
+        return {"success": True, **result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==========================================
+# Today panel — aggregator
+# ==========================================
+
+@app.get("/api/v1/today")
+async def today_panel(tutor_id: str):
+    """One call returns everything the Today view needs."""
+    try:
+        now = datetime.utcnow()
+        soon = (now + timedelta(hours=2)).isoformat()
+
+        # Sessions today (occurred_at between now and now+2h, plus past sessions today)
+        upcoming = supabase.table("lesson_sessions") \
+            .select("id, student_id, lesson_id, occurred_at, status") \
+            .eq("tutor_id", tutor_id) \
+            .gte("occurred_at", now.isoformat()) \
+            .lte("occurred_at", soon) \
+            .order("occurred_at", desc=False) \
+            .limit(10) \
+            .execute()
+
+        # Action-needed inbox
+        unassessed = supabase.table("lesson_sessions") \
+            .select("id") \
+            .eq("tutor_id", tutor_id) \
+            .in_("status", ["pending", "transcribed"]) \
+            .execute()
+        homework_pending = supabase.table("homework_assignments") \
+            .select("id") \
+            .eq("tutor_id", tutor_id) \
+            .eq("status", "submitted") \
+            .execute()
+        reports_overdue = supabase.table("parent_feedback_reports") \
+            .select("id") \
+            .eq("tutor_id", tutor_id) \
+            .eq("status", "draft") \
+            .lte("created_at", (now - timedelta(days=3)).isoformat()) \
+            .execute()
+        unread = await notification_service.list_unread(tutor_id)
+        action_misconceptions = [n for n in unread if n.get("category") == "misconception_detected"]
+
+        return {
+            "success": True,
+            "next_up": (upcoming.data[0] if upcoming.data else None),
+            "schedule_today": upcoming.data or [],
+            "action_needed": {
+                "unassessed_sessions": len(unassessed.data or []),
+                "homework_pending": len(homework_pending.data or []),
+                "reports_overdue": len(reports_overdue.data or []),
+                "misconceptions": action_misconceptions,
+            },
+            "unread_notifications": len(unread),
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

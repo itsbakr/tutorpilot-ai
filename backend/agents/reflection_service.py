@@ -226,6 +226,15 @@ Return ONLY valid JSON:
             'activity_creator': 'activity',
             'session_assessor': 'session_assessment',
             'feedback_generator': 'parent_report',
+            'standards_aligner': 'lesson',
+            'briefing_agent': 'briefing',
+            'voice_memo_agent': 'voice_memo',
+            'homework_generator': 'homework',
+            'homework_checker': 'homework',
+            'misconception_detector': 'misconception',
+            'difficulty_calibrator': 'calibration',
+            'language_adapter': 'lesson',
+            'integrity_check': 'homework',
         }
         return mapping.get(agent_type, 'strategy')
     
@@ -302,7 +311,11 @@ async def run_reflection_analysis():
     print("=" * 60)
     
     for agent_type in ['strategy_planner', 'lesson_creator', 'activity_creator',
-                       'session_assessor', 'feedback_generator']:
+                       'session_assessor', 'feedback_generator',
+                       'standards_aligner', 'briefing_agent', 'voice_memo_agent',
+                       'homework_generator', 'homework_checker',
+                       'misconception_detector', 'difficulty_calibrator',
+                       'language_adapter', 'integrity_check']:
         try:
             insights = await reflection_service.generate_learning_insights(
                 agent_type=agent_type,
