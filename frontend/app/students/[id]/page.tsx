@@ -255,6 +255,50 @@ export default function StudentDetailPage() {
                 </div>
               </GlassCard>
             </Link>
+            <Link href={`/students/${studentId}/briefings`}>
+              <GlassCard hover padding="md" className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
+                  <SparklesIcon className="w-5 h-5 text-amber-600" />
+                </div>
+                <div className="min-w-0">
+                  <p className="font-semibold text-foreground">Briefings</p>
+                  <p className="text-sm text-[var(--foreground-muted)]">Pre-session prep cards</p>
+                </div>
+              </GlassCard>
+            </Link>
+            <Link href={`/students/${studentId}/homework`}>
+              <GlassCard hover padding="md" className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
+                  <DocumentTextIcon className="w-5 h-5 text-blue-600" />
+                </div>
+                <div className="min-w-0">
+                  <p className="font-semibold text-foreground">Homework</p>
+                  <p className="text-sm text-[var(--foreground-muted)]">Generate, grade, track</p>
+                </div>
+              </GlassCard>
+            </Link>
+            <Link href={`/students/${studentId}/standards`}>
+              <GlassCard hover padding="md" className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-teal-500/10 border border-teal-500/20 flex items-center justify-center">
+                  <ChartBarIcon className="w-5 h-5 text-teal-600" />
+                </div>
+                <div className="min-w-0">
+                  <p className="font-semibold text-foreground">Standards</p>
+                  <p className="text-sm text-[var(--foreground-muted)]">Coverage heatmap</p>
+                </div>
+              </GlassCard>
+            </Link>
+            <Link href={`/students/${studentId}/misconceptions`}>
+              <GlassCard hover padding="md" className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center">
+                  <LightBulbIcon className="w-5 h-5 text-rose-600" />
+                </div>
+                <div className="min-w-0">
+                  <p className="font-semibold text-foreground">Misconceptions</p>
+                  <p className="text-sm text-[var(--foreground-muted)]">Patterns we noticed</p>
+                </div>
+              </GlassCard>
+            </Link>
           </div>
         </div>
 

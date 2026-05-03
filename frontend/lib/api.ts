@@ -272,6 +272,15 @@ export const tutorApi = {
   recordSavedPromptUse: async (id: string): Promise<void> => {
     await api.post(`/api/v1/tutor/saved-prompts/${id}/use`);
   },
+  updatePreferences: async (
+    tutorId: string,
+    patch: {
+      timezone?: string;
+      preferred_language?: string;
+      working_hours?: any;
+      comm_preferences?: any;
+    },
+  ) => (await api.patch(`/api/v1/tutors/${tutorId}/preferences`, patch)).data,
 };
 
 // ─── Voice transcription (Tier 1.3) ───────────────────────────────────────────
@@ -524,6 +533,108 @@ export const alignmentApi = {
     const res = await api.get('/api/v1/curriculum-standards');
     return res.data?.standards ?? [];
   },
+};
+
+// ─── Notifications, standards, briefings, voice memos, homework, etc. (from main) ─
+export const notificationApi = {
+  list: async (tutorId: string, unreadOnly = false) => {
+    const r = await api.get(`/api/v1/notifications?tutor_id=${tutorId}&unread_only=${unreadOnly}`);
+    return r.data;
+  },
+  markRead: async (id: string) => (await api.post(`/api/v1/notifications/${id}/read`)).data,
+  markAllRead: async (tutorId: string) =>
+    (await api.post(`/api/v1/notifications/read-all?tutor_id=${tutorId}`)).data,
+};
+
+export const standardsApi = {
+  forLesson: async (lessonId: string) =>
+    (await api.get(`/api/v1/lessons/${lessonId}/standards`)).data,
+  realign: async (lessonId: string) =>
+    (await api.post(`/api/v1/lessons/${lessonId}/standards/realign`)).data,
+  studentCoverage: async (studentId: string) =>
+    (await api.get(`/api/v1/students/${studentId}/standards-coverage`)).data,
+};
+
+export const briefingApi = {
+  generate: async (data: { student_id: string; tutor_id: string; upcoming_lesson_id?: string }) =>
+    (await api.post('/api/v1/briefings/generate', data)).data,
+  list: async (studentId: string) =>
+    (await api.get(`/api/v1/students/${studentId}/briefings`)).data,
+  get: async (id: string) => (await api.get(`/api/v1/briefings/${id}`)).data,
+  acknowledge: async (id: string) => (await api.post(`/api/v1/briefings/${id}/acknowledge`)).data,
+};
+
+export const voiceMemoApi = {
+  upload: async (data: { tutor_id: string; student_id?: string; duration_seconds?: number; file: Blob | File }) => {
+    const form = new FormData();
+    form.append('tutor_id', data.tutor_id);
+    if (data.student_id) form.append('student_id', data.student_id);
+    if (data.duration_seconds != null) form.append('duration_seconds', String(data.duration_seconds));
+    form.append('file', data.file as any, (data.file as any).name || 'memo.webm');
+    const r = await api.post('/api/v1/voice-memos/upload', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return r.data;
+  },
+  get: async (id: string) => (await api.get(`/api/v1/voice-memos/${id}`)).data,
+};
+
+export const homeworkApi = {
+  generate: async (data: {
+    student_id: string;
+    tutor_id: string;
+    lesson_id?: string;
+    format?: string;
+    item_count?: number;
+    difficulty_target?: number;
+    title?: string;
+    due_at?: string;
+    estimated_duration_minutes?: number;
+    focus_standard_code?: string;
+  }) => (await api.post('/api/v1/agents/homework-generator', data)).data,
+  list: async (studentId: string) =>
+    (await api.get(`/api/v1/students/${studentId}/homework`)).data,
+  get: async (assignmentId: string) =>
+    (await api.get(`/api/v1/homework/${assignmentId}`)).data,
+  submit: async (assignmentId: string, data: { typed_answers?: Record<string, string>; photos?: File[] }) => {
+    const form = new FormData();
+    if (data.typed_answers) form.append('typed_answers_json', JSON.stringify(data.typed_answers));
+    (data.photos || []).forEach((p) => form.append('photos', p, p.name));
+    const r = await api.post(`/api/v1/homework/${assignmentId}/submit`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return r.data;
+  },
+  getSubmission: async (id: string) =>
+    (await api.get(`/api/v1/homework/submissions/${id}`)).data,
+  runIntegrityCheck: async (id: string) =>
+    (await api.post(`/api/v1/homework/submissions/${id}/integrity-check`)).data,
+};
+
+export const misconceptionApi = {
+  detect: async (studentId: string) =>
+    (await api.post(`/api/v1/students/${studentId}/misconceptions/detect`)).data,
+  list: async (studentId: string) =>
+    (await api.get(`/api/v1/students/${studentId}/misconceptions`)).data,
+};
+
+export const calibrationApi = {
+  recompute: async (studentId: string) =>
+    (await api.post(`/api/v1/students/${studentId}/difficulty/calibrate`)).data,
+  get: async (studentId: string) =>
+    (await api.get(`/api/v1/students/${studentId}/difficulty`)).data,
+};
+
+export const languageAdapterApi = {
+  adapt: async (
+    lessonId: string,
+    data: { target_language: string; scope?: 'difficult_only' | 'full'; add_glossary?: boolean; tutor_id?: string },
+  ) => (await api.post(`/api/v1/lessons/${lessonId}/adapt-language`, data)).data,
+};
+
+export const todayApi = {
+  load: async (tutorId: string) =>
+    (await api.get(`/api/v1/today?tutor_id=${tutorId}`)).data,
 };
 
 // ─── Feedback / session-recordings API (from main) ────────────────────────────
