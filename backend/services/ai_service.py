@@ -186,6 +186,70 @@ async def call_gemini_multimodal(
             raise Exception(f"Gemini multimodal API error: {str(e)[:200]}")
 
 
+@weave.op()
+async def call_gemini_with_images(
+    prompt: str,
+    images: list,            # list of dicts: [{ "bytes": <bytes>, "mime_type": "image/jpeg" }, ...]
+    temperature: float = 0.3,
+    max_tokens: int = 6000,
+) -> str:
+    """Call Gemini 3.0 Flash with one or more images alongside a text prompt.
+
+    Used for OCR + grading homework photos. Each image is sent as inline_data.
+    """
+    api_key = os.getenv("GOOGLE_LEARNLM_API_KEY") or os.getenv("GOOGLE_GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GOOGLE_GEMINI_API_KEY not set in environment")
+
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel("gemini-3-flash-preview")
+    generation_config = genai.GenerationConfig(
+        temperature=temperature,
+        max_output_tokens=max_tokens,
+        top_p=0.95,
+        top_k=40,
+    )
+
+    parts = [{"text": prompt}]
+    for img in images or []:
+        parts.append({
+            "inline_data": {
+                "mime_type": img.get("mime_type", "image/jpeg"),
+                "data": img["bytes"],
+            }
+        })
+    contents = [{"parts": parts}]
+
+    max_retries = 5
+    base_delay = 3
+    for attempt in range(max_retries):
+        try:
+            response = await asyncio.to_thread(
+                model.generate_content,
+                contents,
+                generation_config=generation_config,
+            )
+            if response and getattr(response, "text", None):
+                return response.text
+            raise Exception("No text in Gemini multi-image response")
+        except Exception as e:
+            error_str = str(e).lower()
+            is_last = attempt == max_retries - 1
+            if "404" in str(e) or "not found" in error_str:
+                raise Exception("Gemini model not found for multi-image call")
+            is_retryable = (
+                "429" in str(e) or "503" in str(e) or "500" in str(e)
+                or "quota" in error_str or "service unavailable" in error_str
+                or "deadline exceeded" in error_str or "timeout" in error_str
+            )
+            if is_retryable and not is_last:
+                delay = base_delay * (2 ** attempt)
+                print(f"⏳ Gemini images retryable error, retrying in {delay}s... ({attempt + 1}/{max_retries})")
+                await asyncio.sleep(delay)
+                continue
+            raise Exception(f"Gemini images API error: {str(e)[:200]}")
+
+
 async def upload_gemini_file(file_bytes: bytes, mime_type: str, display_name: str = "session_media") -> str:
     """Upload a media file via the Gemini Files API and return its file URI.
 
