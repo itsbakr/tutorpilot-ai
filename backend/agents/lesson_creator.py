@@ -147,7 +147,15 @@ async def generate_lesson(
         evaluation=evaluation,
         session_id=str(lesson_id)
     )
-    
+
+    # Step 8: Fire-and-forget standards alignment (background task)
+    try:
+        import asyncio
+        from agents.standards_aligner import align_lesson_to_standards
+        asyncio.create_task(align_lesson_to_standards(str(lesson_id)))
+    except Exception as e:
+        print(f"   ⚠️ Could not start standards alignment: {e}")
+
     return {
         'lesson_id': str(lesson_id),
         'content': lesson_content,
