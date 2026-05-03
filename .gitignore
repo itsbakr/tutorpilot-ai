@@ -61,9 +61,11 @@ frontend/.env.local
 supabase/.branches
 supabase/.temp
 
-# Test files
+# Test files (except the official suites under */tests/)
 test_*.py
 *_test.py
+!backend/tests/test_*.py
+!backend/tests/*_test.py
 
 # Weave cache
 .weave/
