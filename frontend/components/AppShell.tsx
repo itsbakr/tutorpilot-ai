@@ -18,13 +18,16 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   MagnifyingGlassIcon,
-  BellIcon,
   Bars3Icon,
   XMarkIcon,
   SparklesIcon,
   BoltIcon,
   AcademicCapIcon,
+  CalendarIcon,
+  GlobeAltIcon,
 } from '@heroicons/react/24/outline'
+import { NotificationBell } from './NotificationBell'
+import { VoiceMemoButton } from './VoiceMemoButton'
 import { 
   HomeIcon as HomeIconSolid,
   UserGroupIcon as UserGroupIconSolid,
@@ -41,20 +44,32 @@ interface AppShellProps {
 }
 
 const navItems = [
-  { 
-    name: 'Dashboard', 
-    href: '/dashboard', 
+  {
+    name: 'Today',
+    href: '/today',
     icon: HomeIcon,
     iconSolid: HomeIconSolid,
   },
-  { 
-    name: 'Students', 
-    href: '/students', 
+  {
+    name: 'Students',
+    href: '/students',
     icon: UserGroupIcon,
     iconSolid: UserGroupIconSolid,
   },
-  { 
-    name: 'Create Content', 
+  {
+    name: 'Curriculum',
+    href: '/curriculum',
+    icon: GlobeAltIcon,
+    iconSolid: GlobeAltIcon,
+  },
+  {
+    name: 'Schedule',
+    href: '/schedule',
+    icon: CalendarIcon,
+    iconSolid: CalendarIcon,
+  },
+  {
+    name: 'Create Content',
     icon: SparklesIcon,
     children: [
       { name: 'Strategy Planner', href: '/strategy', icon: BookOpenIcon, iconSolid: BookOpenIconSolid, color: 'bg-gradient-to-br from-primary to-primary-dark' },
@@ -62,21 +77,21 @@ const navItems = [
       { name: 'Activity Builder', href: '/activity', icon: RocketLaunchIcon, iconSolid: RocketLaunchIconSolid, color: 'bg-gradient-to-br from-[var(--info)] to-blue-700' },
     ]
   },
-  { 
-    name: 'Content Library', 
-    href: '/library', 
+  {
+    name: 'Content Library',
+    href: '/library',
     icon: FolderIcon,
     iconSolid: FolderIconSolid,
   },
-  { 
-    name: 'Analytics', 
-    href: '/analytics', 
+  {
+    name: 'Analytics',
+    href: '/analytics',
     icon: ChartBarIcon,
     iconSolid: ChartBarIconSolid,
   },
-  { 
-    name: 'Settings', 
-    href: '/settings', 
+  {
+    name: 'Settings',
+    href: '/settings',
     icon: Cog6ToothIcon,
     iconSolid: Cog6ToothIconSolid,
   },
@@ -331,10 +346,7 @@ export function AppShell({ children }: AppShellProps) {
               </Link>
 
               {/* Notifications */}
-                <button className="relative p-2.5 text-[var(--foreground-muted)] hover:text-foreground hover:bg-[var(--background-secondary)] rounded-xl transition-colors">
-                  <BellIcon className="w-5 h-5" />
-                  <span className="absolute top-2 right-2 w-2 h-2 bg-primary rounded-full ring-2 ring-white"></span>
-                </button>
+                <NotificationBell />
 
                 {/* Mobile search */}
                 <button className="sm:hidden p-2.5 text-[var(--foreground-muted)] hover:text-foreground hover:bg-[var(--background-secondary)] rounded-xl transition-colors">
@@ -366,6 +378,9 @@ export function AppShell({ children }: AppShellProps) {
           </motion.div>
         </main>
       </div>
+
+      {/* Floating voice memo button */}
+      <VoiceMemoButton />
     </div>
   )
 }
