@@ -13,22 +13,28 @@ import {
 // Toast types
 type ToastType = 'success' | 'error' | 'warning' | 'info';
 
+interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
 interface Toast {
   id: string;
   type: ToastType;
   title: string;
   message?: string;
   duration?: number;
+  action?: ToastAction;
 }
 
 interface ToastContextType {
   toasts: Toast[];
   addToast: (toast: Omit<Toast, 'id'>) => void;
   removeToast: (id: string) => void;
-  success: (title: string, message?: string) => void;
-  error: (title: string, message?: string) => void;
-  warning: (title: string, message?: string) => void;
-  info: (title: string, message?: string) => void;
+  success: (title: string, message?: string, action?: ToastAction) => void;
+  error: (title: string, message?: string, action?: ToastAction) => void;
+  warning: (title: string, message?: string, action?: ToastAction) => void;
+  info: (title: string, message?: string, action?: ToastAction) => void;
 }
 
 const ToastContext = createContext<ToastContextType | undefined>(undefined);
@@ -57,29 +63,29 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   );
 
   const success = useCallback(
-    (title: string, message?: string) => {
-      addToast({ type: 'success', title, message });
+    (title: string, message?: string, action?: ToastAction) => {
+      addToast({ type: 'success', title, message, action });
     },
     [addToast]
   );
 
   const error = useCallback(
-    (title: string, message?: string) => {
-      addToast({ type: 'error', title, message });
+    (title: string, message?: string, action?: ToastAction) => {
+      addToast({ type: 'error', title, message, action });
     },
     [addToast]
   );
 
   const warning = useCallback(
-    (title: string, message?: string) => {
-      addToast({ type: 'warning', title, message });
+    (title: string, message?: string, action?: ToastAction) => {
+      addToast({ type: 'warning', title, message, action });
     },
     [addToast]
   );
 
   const info = useCallback(
-    (title: string, message?: string) => {
-      addToast({ type: 'info', title, message });
+    (title: string, message?: string, action?: ToastAction) => {
+      addToast({ type: 'info', title, message, action });
     },
     [addToast]
   );
@@ -171,6 +177,17 @@ function ToastItem({ toast, onClose }: { toast: Toast; onClose: () => void }) {
         <p className="font-semibold text-sm text-foreground">{toast.title}</p>
         {toast.message && (
           <p className="mt-1 text-xs text-[var(--foreground-muted)]">{toast.message}</p>
+        )}
+        {toast.action && (
+          <button
+            onClick={() => {
+              toast.action?.onClick();
+              onClose();
+            }}
+            className="mt-2 inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-white/70 hover:bg-white border border-[var(--card-border)] text-[11px] font-semibold text-foreground transition-colors"
+          >
+            {toast.action.label}
+          </button>
         )}
       </div>
       <button

@@ -18,6 +18,7 @@ import {
   ArrowLeftIcon,
   DocumentTextIcon,
   PencilSquareIcon,
+  RocketLaunchIcon,
 } from '@heroicons/react/24/outline';
 
 type LessonRow = {
@@ -94,12 +95,44 @@ export default function LessonDetailPage() {
               </Button>
             </Link>
             <Link href={`/lesson?id=${lesson.id}`}>
-              <Button variant="gradient" rightIcon={<PencilSquareIcon className="w-4 h-4" />}>
+              <Button variant="secondary" rightIcon={<PencilSquareIcon className="w-4 h-4" />}>
                 Open in Creator
+              </Button>
+            </Link>
+            <Link
+              href={`/activity?lesson=${lesson.id}${
+                lesson.student_id ? `&student=${lesson.student_id}` : ''
+              }`}
+            >
+              <Button variant="gradient" rightIcon={<RocketLaunchIcon className="w-4 h-4" />}>
+                Create Activity
               </Button>
             </Link>
           </div>
         </div>
+
+        {/* Per-phase quick-links */}
+        {Array.isArray(lesson.content?.phases) && lesson.content.phases.length > 0 && (
+          <GlassCard padding="md" className="bg-primary/5 border-primary/20">
+            <p className="text-sm font-bold text-foreground mb-2">
+              Build an activity for any phase
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {lesson.content.phases.map((phase: any) => (
+                <Link
+                  key={phase.name}
+                  href={`/activity?lesson=${lesson.id}${
+                    lesson.student_id ? `&student=${lesson.student_id}` : ''
+                  }&phase=${encodeURIComponent(phase.name)}`}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white border border-[var(--card-border)] text-xs font-medium text-foreground hover:border-primary/40 hover:bg-primary/5 transition-colors"
+                >
+                  <RocketLaunchIcon className="w-3.5 h-3.5 text-primary" />
+                  {phase.name}
+                </Link>
+              ))}
+            </div>
+          </GlassCard>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">

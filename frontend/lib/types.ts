@@ -83,6 +83,7 @@ export interface ActivityChatMessage {
   isStreaming?: boolean;
   stage?: 'thinking' | 'editing' | 'debugging' | 'deploying' | 'ready' | 'error';
   error?: string;
+  version_number?: number;
 }
 
 export interface ContentVersion {

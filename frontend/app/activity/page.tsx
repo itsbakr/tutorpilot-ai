@@ -108,12 +108,20 @@ function ActivityPageInner() {
     loadData();
   }, []);
 
-  // Prefill student from URL: /activity?student=<uuid>
+  // Prefill from URL: /activity?student=<uuid>&lesson=<uuid>&phase=<phase>&topic=<text>
   useEffect(() => {
     const studentFromUrl = searchParams.get('student') || '';
-    if (studentFromUrl) {
-      setFormData((p) => ({ ...p, student_id: studentFromUrl }));
-    }
+    const lessonFromUrl = searchParams.get('lesson') || '';
+    const phaseFromUrl = searchParams.get('phase') || '';
+    const topicFromUrl = searchParams.get('topic') || '';
+    setFormData((p) => ({
+      ...p,
+      student_id: studentFromUrl || p.student_id,
+      lesson_id: lessonFromUrl || p.lesson_id,
+      lesson_phase: phaseFromUrl || p.lesson_phase,
+      use_lesson: lessonFromUrl ? true : p.use_lesson,
+      topic: topicFromUrl || p.topic,
+    }));
   }, [searchParams]);
 
   // Load an existing activity by id: /activity?id=<uuid>
@@ -401,6 +409,7 @@ function ActivityPageInner() {
           studentId={formData.student_id}
           initialSandboxUrl={sandboxUrl}
           initialDeploymentStatus={activity.deployment?.status}
+          initialCode={code}
           tutorName={user?.name}
           topic={(activity as any)?.content?.topic || formData.topic || (selectedLesson?.title ?? 'Activity')}
           onCodeUpdate={(newCode, newUrl) => handleCodeUpdate(newCode, newUrl || '')}

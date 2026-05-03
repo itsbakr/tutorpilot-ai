@@ -382,6 +382,23 @@ This MUST look like a professional, modern web app (Duolingo, Khan Academy, Bril
 - **ALWAYS use semicolons** after every statement (mandatory!)
 - NO LINE LIMIT - build something comprehensive!
 
+**CRITICAL — TUTOR-PILOT CONTRACT (MANDATORY)**:
+- Read URL params at startup: `const params = new URLSearchParams(window.location.search);`
+- `const isTutor = params.get('role') === 'tutor';` — when true, you may show debug controls; default UI assumes student.
+- Emit interaction events to the parent window using:
+  ```js
+  function reportEvent(kind, payload) {{
+    try {{
+      window.parent.postMessage({{ type: 'tutorpilot:event', kind, payload }}, '*');
+    }} catch (e) {{}}
+  }}
+  ```
+- Call `reportEvent` for at least these moments:
+  - `reportEvent('answer', {{ question_id, question, response, correct, time_ms }})` after each question/choice.
+  - `reportEvent('hint', {{ question_id }})` when the student requests a hint.
+  - `reportEvent('completed', {{ score, total, time_ms }})` when the activity finishes.
+- These events feed the tutor's run-results dashboard. They are silent if the activity is opened standalone.
+
 **CULTURAL ADAPTATION**:
 - Student background: {student.get('nationality', 'International')}
 - Use examples relevant to: {', '.join(student.get('interests', [])[:2])}
