@@ -4,7 +4,13 @@ import type { StrategyResponse, LessonResponse, ActivityResponse } from './types
 export type ActivityChatStreamEvent =
   | { type: 'stage'; stage: 'thinking' | 'editing' | 'debugging' | 'deploying' }
   | { type: 'explanation'; text: string }
-  | { type: 'ready'; sandbox_url?: string; new_code?: string; explanation?: string }
+  | {
+      type: 'ready';
+      sandbox_url?: string;
+      new_code?: string;
+      explanation?: string;
+      version_number?: number;
+    }
   | { type: 'error'; message: string };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -319,6 +325,39 @@ export const sessionApi = {
     const res = await api.post(`/api/v1/sessions/${sessionId}/end`);
     return res.data?.session;
   },
+  // Best-effort fire-and-forget for unload events. Uses sendBeacon when
+  // available so the request survives the page being torn down.
+  endBeacon: (sessionId: string): void => {
+    try {
+      const url = `${API_URL}/api/v1/sessions/${sessionId}/end`;
+      if (typeof navigator !== 'undefined' && 'sendBeacon' in navigator) {
+        navigator.sendBeacon(url, new Blob([], { type: 'application/json' }));
+      } else {
+        fetch(url, { method: 'POST', keepalive: true }).catch(() => {});
+      }
+    } catch {
+      /* ignore */
+    }
+  },
+  pushEventsBeacon: (sessionId: string, events: ActivitySessionEvent[]): void => {
+    if (!events.length) return;
+    try {
+      const url = `${API_URL}/api/v1/sessions/${sessionId}/events`;
+      const body = JSON.stringify({ events });
+      if (typeof navigator !== 'undefined' && 'sendBeacon' in navigator) {
+        navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
+      } else {
+        fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+          keepalive: true,
+        }).catch(() => {});
+      }
+    } catch {
+      /* ignore */
+    }
+  },
   get: async (sessionId: string): Promise<{ session: ActivitySession; events: any[] }> => {
     const res = await api.get(`/api/v1/sessions/${sessionId}`);
     return res.data;
@@ -399,13 +438,21 @@ export const insightsApi = {
 };
 
 // ─── Recap (Tier 3.2) ─────────────────────────────────────────────────────────
+export interface RecapResult {
+  subject: string;
+  body: string;
+  empty?: boolean;
+  message?: string;
+  session_count?: number;
+}
+
 export const recapApi = {
   generate: async (data: {
     student_id: string;
     from_date: string;
     to_date: string;
     tone?: 'warm' | 'concise';
-  }): Promise<{ subject: string; body: string }> => {
+  }): Promise<RecapResult> => {
     const res = await api.post(`/api/v1/students/${data.student_id}/recap`, data);
     return res.data;
   },

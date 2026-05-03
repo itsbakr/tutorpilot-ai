@@ -409,6 +409,7 @@ function ActivityPageInner() {
           studentId={formData.student_id}
           initialSandboxUrl={sandboxUrl}
           initialDeploymentStatus={activity.deployment?.status}
+          initialCode={code}
           tutorName={user?.name}
           topic={(activity as any)?.content?.topic || formData.topic || (selectedLesson?.title ?? 'Activity')}
           onCodeUpdate={(newCode, newUrl) => handleCodeUpdate(newCode, newUrl || '')}

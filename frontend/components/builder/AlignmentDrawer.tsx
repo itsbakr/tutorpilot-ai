@@ -160,7 +160,7 @@ function ResultCard({
       ? 'text-[var(--success)] border-[var(--success)]/30 bg-[var(--success-bg)]'
       : result?.status === 'fail'
       ? 'text-red-600 border-red-200 bg-red-50'
-      : 'text-[var(--accent-dark)] border-[var(--accent)]/30 bg-[var(--accent-bg)]';
+      : 'text-[var(--accent-dark)] border-[var(--accent)]/30 bg-[var(--accent)]/10';
 
   return (
     <div

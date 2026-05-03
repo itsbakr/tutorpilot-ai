@@ -1046,13 +1046,16 @@ async def activity_chat_stream(request: ActivityChatRequest):
                 .execute()
 
             # Snapshot a new version (Tier 3.4)
+            version_number = None
             try:
-                await snapshot_version(
+                snap = await snapshot_version(
                     activity_id=request.activity_id,
                     code=new_code,
                     sandbox_url=sandbox_url,
                     tutor_id=request.tutor_id,
                 )
+                if snap:
+                    version_number = snap.get("version_number")
             except Exception as ver_e:
                 print(f"⚠️ Failed to snapshot version: {ver_e}")
 
@@ -1061,6 +1064,7 @@ async def activity_chat_stream(request: ActivityChatRequest):
                 "sandbox_url": sandbox_url,
                 "new_code": new_code,
                 "explanation": explanation,
+                "version_number": version_number,
             })
 
         except Exception as e:

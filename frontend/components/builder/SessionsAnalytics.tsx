@@ -15,6 +15,11 @@ import { sessionApi, type ActivitySession } from '@/lib/api';
 
 interface SessionsAnalyticsProps {
   activityId: string;
+  /** True if the current activity code emits `tutorpilot:event` postMessages.
+   *  When false, we tell the tutor to remix/regenerate so old activities don't
+   *  silently show "no sessions". */
+  supportsSessionRecording?: boolean;
+  onUpgradeClick?: () => void;
 }
 
 interface AnalyticsData {
@@ -24,7 +29,11 @@ interface AnalyticsData {
   completion_rate: number;
 }
 
-export function SessionsAnalytics({ activityId }: SessionsAnalyticsProps) {
+export function SessionsAnalytics({
+  activityId,
+  supportsSessionRecording = true,
+  onUpgradeClick,
+}: SessionsAnalyticsProps) {
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
   const [sessions, setSessions] = useState<ActivitySession[]>([]);
   const [loading, setLoading] = useState(true);
@@ -69,10 +78,33 @@ export function SessionsAnalytics({ activityId }: SessionsAnalyticsProps) {
             <ChartBarIcon className="w-7 h-7 text-primary" />
           </div>
           <h3 className="text-base font-bold text-foreground">No sessions yet</h3>
-          <p className="text-xs text-[var(--foreground-muted)] mt-1">
-            Toggle to <strong>Student view</strong> in the preview header to record a session.
-            Stats will appear here.
-          </p>
+          {supportsSessionRecording ? (
+            <p className="text-xs text-[var(--foreground-muted)] mt-1">
+              Toggle to <strong>Student view</strong> in the preview header to record a session.
+              Stats will appear here.
+            </p>
+          ) : (
+            <>
+              <p className="text-xs text-[var(--foreground-muted)] mt-1">
+                This activity was generated before session recording was added, so it
+                won't emit events when a student uses it.
+              </p>
+              <p className="text-xs text-[var(--foreground-muted)] mt-2">
+                Send a chat message like <em>&ldquo;upgrade to support session recording&rdquo;</em> or
+                use the Tools menu to adapt for another student — the regenerated
+                version will work.
+              </p>
+              {onUpgradeClick && (
+                <button
+                  type="button"
+                  onClick={onUpgradeClick}
+                  className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-br from-primary to-primary-dark text-white text-xs font-semibold"
+                >
+                  Upgrade this activity
+                </button>
+              )}
+            </>
+          )}
         </div>
       </div>
     );

@@ -12,6 +12,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { StarIcon as StarSolidIcon } from '@heroicons/react/24/solid';
 import { versionsApi, type ActivityVersion } from '@/lib/api';
+import { useToast } from '@/components/ui/Toast';
 
 interface VersionDropdownProps {
   activityId: string;
@@ -20,6 +21,7 @@ interface VersionDropdownProps {
 }
 
 export function VersionDropdown({ activityId, studentId, onRestore }: VersionDropdownProps) {
+  const toast = useToast();
   const [open, setOpen] = useState(false);
   const [versions, setVersions] = useState<ActivityVersion[]>([]);
   const [editing, setEditing] = useState<string | null>(null);
@@ -41,35 +43,80 @@ export function VersionDropdown({ activityId, studentId, onRestore }: VersionDro
   const current = versions[0];
 
   const handleRestore = async (v: ActivityVersion) => {
+    // Capture the previous "current" so we can offer Undo.
+    const previousCurrent = versions[0];
     try {
       const res = await versionsApi.restore(v.id);
       onRestore?.({ code: res.code, sandbox_url: res.sandbox_url });
       setOpen(false);
+      toast.info(
+        `Restored v${v.version_number}`,
+        v.label ? `"${v.label}" is now live in the sandbox.` : 'This version is now live.',
+        previousCurrent && previousCurrent.id !== v.id
+          ? {
+              label: `Undo (back to v${previousCurrent.version_number})`,
+              onClick: async () => {
+                try {
+                  const back = await versionsApi.restore(previousCurrent.id);
+                  onRestore?.({ code: back.code, sandbox_url: back.sandbox_url });
+                  toast.info(
+                    `Back to v${previousCurrent.version_number}`,
+                    'Undo complete.'
+                  );
+                } catch (e) {
+                  console.error('Undo restore failed', e);
+                }
+              },
+            }
+          : undefined
+      );
     } catch (err) {
       console.error('Restore failed', err);
+      toast.error('Restore failed', 'Please try again.');
     }
   };
 
   const handlePin = async (v: ActivityVersion) => {
     if (!studentId) return;
+    const wasPinned = v.pinned_for_student_id === studentId;
+    const previouslyPinned = versions.find(
+      (p) => p.pinned_for_student_id === studentId && p.id !== v.id
+    );
     try {
-      const updated = await versionsApi.pin(
-        v.id,
-        v.pinned_for_student_id === studentId ? null : studentId
-      );
-      setVersions((prev) => {
-        // Reset pin state on others
-        const list = prev.map((p) =>
+      const updated = await versionsApi.pin(v.id, wasPinned ? null : studentId);
+      setVersions((prev) =>
+        prev.map((p) =>
           p.id === updated.id
             ? updated
             : p.pinned_for_student_id === studentId
             ? { ...p, pinned_for_student_id: undefined }
             : p
-        );
-        return list;
-      });
+        )
+      );
+      const undo = {
+        label: 'Undo',
+        onClick: async () => {
+          try {
+            await versionsApi.pin(v.id, wasPinned ? studentId : null);
+            if (previouslyPinned && !wasPinned) {
+              await versionsApi.pin(previouslyPinned.id, studentId);
+            }
+            // refresh
+            const list = await versionsApi.list(activityId);
+            setVersions(list);
+          } catch (e) {
+            console.error('Undo pin failed', e);
+          }
+        },
+      };
+      if (wasPinned) {
+        toast.info(`Unpinned v${v.version_number}`, 'No version is pinned for this student.', undo);
+      } else {
+        toast.info(`Pinned v${v.version_number}`, 'This version will load for this student.', undo);
+      }
     } catch (err) {
       console.error('Pin failed', err);
+      toast.error('Pin failed', 'Please try again.');
     }
   };
 

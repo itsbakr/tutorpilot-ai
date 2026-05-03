@@ -8,7 +8,7 @@ import {
   EnvelopeIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
-import { recapApi } from '@/lib/api';
+import { recapApi, type RecapResult } from '@/lib/api';
 
 interface RecapModalProps {
   open: boolean;
@@ -27,7 +27,7 @@ export function RecapModal({ open, onClose, studentId, studentName }: RecapModal
   const [to, setTo] = useState(fmtDate(today));
   const [tone, setTone] = useState<'warm' | 'concise'>('warm');
   const [generating, setGenerating] = useState(false);
-  const [draft, setDraft] = useState<{ subject: string; body: string } | null>(null);
+  const [draft, setDraft] = useState<RecapResult | null>(null);
   const [copied, setCopied] = useState(false);
 
   const handleGenerate = async () => {
@@ -126,11 +126,29 @@ export function RecapModal({ open, onClose, studentId, studentName }: RecapModal
             {generating ? 'Generating…' : draft ? 'Regenerate' : 'Generate recap'}
           </button>
 
-          {draft && (
+          {draft && draft.empty && (
+            <div className="rounded-xl border border-[var(--accent)]/30 bg-[var(--accent)]/10 p-3">
+              <p className="text-sm font-bold text-[var(--accent-dark)] mb-1">
+                No sessions in this period
+              </p>
+              <p className="text-xs text-foreground/80 leading-relaxed">
+                {draft.message ||
+                  'Try widening the date range, or run a session in Student view first.'}
+              </p>
+            </div>
+          )}
+
+          {draft && !draft.empty && (
             <div className="rounded-xl border border-[var(--card-border)] p-3 bg-[var(--background-secondary)]/40">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-[11px] font-semibold text-[var(--foreground-muted)] uppercase tracking-wider">
-                  Subject
+                  Subject{' '}
+                  {typeof draft.session_count === 'number' && (
+                    <span className="ml-1 normal-case font-medium">
+                      · drawn from {draft.session_count} session
+                      {draft.session_count === 1 ? '' : 's'}
+                    </span>
+                  )}
                 </p>
                 <button
                   onClick={handleCopy}

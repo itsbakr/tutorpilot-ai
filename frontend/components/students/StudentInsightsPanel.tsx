@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowPathIcon,
   CheckCircleIcon,
+  ChevronDownIcon,
   ExclamationTriangleIcon,
   LightBulbIcon,
   RocketLaunchIcon,
@@ -12,15 +13,23 @@ import {
 } from '@heroicons/react/24/outline';
 import Link from 'next/link';
 import { insightsApi, type StudentInsight } from '@/lib/api';
+import { useToast } from '@/components/ui/Toast';
 
 interface StudentInsightsPanelProps {
   studentId: string;
 }
 
 export function StudentInsightsPanel({ studentId }: StudentInsightsPanelProps) {
+  const toast = useToast();
   const [insights, setInsights] = useState<StudentInsight[]>([]);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  // Default: collapsed when there are no insights, expanded when there are some.
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    setExpanded(insights.length > 0);
+  }, [insights.length]);
 
   const refresh = async () => {
     try {
@@ -49,32 +58,82 @@ export function StudentInsightsPanel({ studentId }: StudentInsightsPanelProps) {
     }
   };
 
-  const handleDismiss = async (id: string) => {
-    setInsights((prev) => prev.filter((i) => i.id !== id));
-    try {
-      await insightsApi.dismiss(id);
-    } catch (err) {
-      console.error('Dismiss failed', err);
-    }
+  const handleDismiss = async (insight: StudentInsight) => {
+    // Optimistic remove + delayed server call so undo can no-op locally if used.
+    setInsights((prev) => prev.filter((i) => i.id !== insight.id));
+    let undone = false;
+    toast.info(
+      'Dismissed',
+      'The insight is hidden — you can bring it back from this toast.',
+      {
+        label: 'Undo',
+        onClick: () => {
+          undone = true;
+          setInsights((prev) =>
+            prev.some((p) => p.id === insight.id) ? prev : [insight, ...prev]
+          );
+        },
+      }
+    );
+    // Defer the server call so undo is local-only when used quickly.
+    setTimeout(async () => {
+      if (undone) return;
+      try {
+        await insightsApi.dismiss(insight.id);
+      } catch (err) {
+        console.error('Dismiss failed', err);
+      }
+    }, 5000);
   };
 
   return (
-    <div className="rounded-2xl border border-[var(--card-border)] bg-white p-4">
-      <div className="flex items-center justify-between mb-3">
+    <div className="rounded-2xl border border-[var(--card-border)] bg-white">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="w-full flex items-center justify-between gap-2 p-3 hover:bg-[var(--background-secondary)]/50 transition-colors"
+      >
         <div className="flex items-center gap-2">
           <LightBulbIcon className="w-4 h-4 text-[var(--accent)]" />
           <h3 className="text-sm font-bold text-foreground">Insights this week</h3>
+          {insights.length > 0 && (
+            <span className="inline-flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full bg-primary text-white text-[10px] font-bold">
+              {insights.length}
+            </span>
+          )}
         </div>
-        <button
-          onClick={handleGenerate}
-          disabled={generating}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-[var(--card-border)] text-xs font-medium text-[var(--foreground-muted)] hover:text-primary hover:border-primary/40 disabled:opacity-50"
-        >
-          <ArrowPathIcon className={`w-3 h-3 ${generating ? 'animate-spin' : ''}`} />
-          {generating ? 'Analyzing…' : 'Refresh'}
-        </button>
-      </div>
+        <div className="flex items-center gap-1">
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleGenerate();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                e.stopPropagation();
+                handleGenerate();
+              }
+            }}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-[var(--card-border)] text-xs font-medium text-[var(--foreground-muted)] hover:text-primary hover:border-primary/40 ${
+              generating ? 'opacity-50 pointer-events-none' : 'cursor-pointer'
+            }`}
+          >
+            <ArrowPathIcon className={`w-3 h-3 ${generating ? 'animate-spin' : ''}`} />
+            {generating ? 'Analyzing…' : 'Refresh'}
+          </span>
+          <ChevronDownIcon
+            className={`w-4 h-4 text-[var(--foreground-muted)] transition-transform ${
+              expanded ? '' : '-rotate-90'
+            }`}
+          />
+        </div>
+      </button>
 
+      {expanded && (
+        <div className="border-t border-[var(--card-border)] p-4">
       {loading ? (
         <p className="text-xs text-[var(--foreground-muted)] py-4 text-center">Loading…</p>
       ) : insights.length === 0 ? (
@@ -97,7 +156,7 @@ export function StudentInsightsPanel({ studentId }: StudentInsightsPanelProps) {
                     ? 'border-red-200 bg-red-50'
                     : i.kind === 'strength'
                     ? 'border-[var(--success)]/30 bg-[var(--success-bg)]'
-                    : 'border-[var(--accent)]/30 bg-[var(--accent-bg)]'
+                    : 'border-[var(--accent)]/30 bg-[var(--accent)]/10'
                 }`}
               >
                 <div className="flex items-start gap-2">
@@ -145,7 +204,7 @@ export function StudentInsightsPanel({ studentId }: StudentInsightsPanelProps) {
                       </Link>
                     )}
                     <button
-                      onClick={() => handleDismiss(i.id)}
+                      onClick={() => handleDismiss(i)}
                       className="p-1 rounded hover:bg-white/60 text-[var(--foreground-muted)]"
                       title="Dismiss"
                     >
@@ -157,6 +216,8 @@ export function StudentInsightsPanel({ studentId }: StudentInsightsPanelProps) {
             ))}
           </AnimatePresence>
         </ul>
+      )}
+        </div>
       )}
     </div>
   );

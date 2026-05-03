@@ -22,6 +22,10 @@ import { AdjustmentDial } from './AdjustmentDial';
 import { SavedPromptsBar } from './SavedPromptsBar';
 import type { DeployStage } from './PreviewPane';
 
+export interface BuilderChatHandle {
+  send: (prompt: string) => void;
+}
+
 interface BuilderChatProps {
   activityId: string;
   tutorId: string;
@@ -29,7 +33,9 @@ interface BuilderChatProps {
   tutorName?: string;
   onStageChange?: (stage: DeployStage) => void;
   onCodeUpdate?: (newCode: string, sandboxUrl?: string) => void;
+  onVersionSnapshot?: (versionNumber: number) => void;
   onError?: (message: string) => void;
+  chatRef?: React.MutableRefObject<BuilderChatHandle | null>;
 }
 
 const STAGE_LABELS: Record<string, string> = {
@@ -65,7 +71,9 @@ export function BuilderChat({
   tutorName,
   onStageChange,
   onCodeUpdate,
+  onVersionSnapshot,
   onError,
+  chatRef,
 }: BuilderChatProps) {
   const [messages, setMessages] = useState<ActivityChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -74,6 +82,9 @@ export function BuilderChat({
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [recording, setRecording] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
+  const [micState, setMicState] = useState<'idle' | 'denied' | 'unavailable'>(
+    'idle'
+  );
 
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -83,8 +94,13 @@ export function BuilderChat({
   const recorderChunksRef = useRef<Blob[]>([]);
 
   const startRecording = useCallback(async () => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      setMicState('unavailable');
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      setMicState('idle');
       const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
       recorderChunksRef.current = [];
       recorder.ondataavailable = (e) => {
@@ -110,7 +126,13 @@ export function BuilderChat({
       recorder.start();
       recorderRef.current = recorder;
       setRecording(true);
-    } catch (err) {
+    } catch (err: any) {
+      // NotAllowedError = user denied; NotFoundError = no device
+      if (err?.name === 'NotAllowedError' || err?.name === 'SecurityError') {
+        setMicState('denied');
+      } else {
+        setMicState('unavailable');
+      }
       console.error('Mic access denied', err);
     }
   }, []);
@@ -256,9 +278,13 @@ export function BuilderChat({
                 sandbox_url: evt.sandbox_url,
                 isStreaming: false,
                 stage: 'ready',
+                version_number: evt.version_number,
               });
               if (evt.new_code) {
                 onCodeUpdate?.(evt.new_code, evt.sandbox_url);
+              }
+              if (typeof evt.version_number === 'number') {
+                onVersionSnapshot?.(evt.version_number);
               }
               setStage('ready');
               // Drop back to idle after a moment so the preview overlay clears
@@ -300,8 +326,17 @@ export function BuilderChat({
         abortRef.current = null;
       }
     },
-    [activityId, tutorId, studentId, streaming, setStage, onCodeUpdate, onError]
+    [activityId, tutorId, studentId, streaming, setStage, onCodeUpdate, onVersionSnapshot, onError]
   );
+
+  // Expose imperative API
+  useEffect(() => {
+    if (!chatRef) return;
+    chatRef.current = { send: (prompt: string) => sendMessage(prompt) };
+    return () => {
+      if (chatRef) chatRef.current = null;
+    };
+  }, [chatRef, sendMessage]);
 
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -377,21 +412,35 @@ export function BuilderChat({
 
       {/* Input */}
       <div className="border-t border-[var(--card-border)] bg-white px-4 py-3 space-y-2">
-        <QuickActions
-          onPick={(prompt) => {
-            setInput((cur) => (cur.trim() ? cur + '\n' + prompt : prompt));
-            textareaRef.current?.focus();
-          }}
-          disabled={streaming}
-        />
-
-        <div className="flex items-center gap-2 flex-wrap">
+        {/* Single toolbar with strong primary affordance (Adjust),
+            then saved prompts, then quick actions in a scrolling row. */}
+        <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide -mx-1 px-1 pb-0.5">
           <AdjustmentDial onApply={(prompt) => sendMessage(prompt)} disabled={streaming} />
-          <span className="text-[var(--card-border)]">·</span>
           <SavedPromptsBar
             tutorId={tutorId}
             draftPrompt={input}
             onPick={(prompt) => sendMessage(prompt)}
+            disabled={streaming}
+          />
+          <span className="hidden sm:block w-px h-4 bg-[var(--card-border)] flex-shrink-0" />
+          <div className="hidden sm:block flex-shrink-0">
+            <QuickActions
+              onPick={(prompt) => {
+                setInput((cur) => (cur.trim() ? cur + '\n' + prompt : prompt));
+                textareaRef.current?.focus();
+              }}
+              disabled={streaming}
+            />
+          </div>
+        </div>
+        {/* Quick actions on their own row only when below sm so the chip strip
+            remains tappable on mobile without crowding the toolbar above. */}
+        <div className="sm:hidden">
+          <QuickActions
+            onPick={(prompt) => {
+              setInput((cur) => (cur.trim() ? cur + '\n' + prompt : prompt));
+              textareaRef.current?.focus();
+            }}
             disabled={streaming}
           />
         </div>
@@ -427,28 +476,45 @@ export function BuilderChat({
           {/* Mic */}
           <button
             type="button"
-            onClick={recording ? stopRecording : startRecording}
-            disabled={streaming || transcribing}
+            onClick={() => {
+              if (micState === 'denied') {
+                // re-prompt: opening browser permissions varies by browser, so
+                // we just retry — most browsers will prompt again unless the
+                // user explicitly blocked.
+                setMicState('idle');
+              }
+              recording ? stopRecording() : startRecording();
+            }}
+            disabled={streaming || transcribing || micState === 'unavailable'}
             className={`
-              flex-shrink-0 inline-flex items-center justify-center w-10 h-10 rounded-xl border transition-all
+              flex-shrink-0 inline-flex items-center justify-center w-10 h-10 rounded-xl border transition-all relative
               ${
                 recording
                   ? 'border-red-300 bg-red-50 text-red-600 animate-pulse'
                   : transcribing
                   ? 'border-[var(--card-border)] bg-[var(--background-secondary)] text-[var(--foreground-muted)]'
+                  : micState === 'denied'
+                  ? 'border-red-200 bg-red-50/70 text-red-600 hover:bg-red-100'
                   : 'border-[var(--card-border)] bg-white text-[var(--foreground-muted)] hover:text-primary hover:border-primary/40'
               }
-              ${streaming || transcribing ? 'opacity-60 cursor-not-allowed' : ''}
+              ${streaming || transcribing || micState === 'unavailable' ? 'opacity-60 cursor-not-allowed' : ''}
             `}
             title={
-              recording
-                ? 'Stop recording'
+              micState === 'unavailable'
+                ? 'Voice input not supported in this browser'
+                : micState === 'denied'
+                ? 'Microphone access blocked. Click to retry, or enable it in your browser settings.'
+                : recording
+                ? 'Click to stop recording'
                 : transcribing
                 ? 'Transcribing…'
-                : 'Voice input (transcribes to text)'
+                : 'Click to record voice input. Your browser will ask for microphone permission.'
             }
           >
             <MicrophoneIcon className="w-4 h-4" />
+            {micState === 'denied' && (
+              <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-red-500 border-2 border-white" />
+            )}
           </button>
 
           {streaming ? (
@@ -610,15 +676,27 @@ function Message({
             <span className="inline-block w-1.5 h-3.5 bg-primary/60 align-middle ml-0.5 animate-pulse" />
           )}
 
-          {message.sandbox_url && message.role === 'agent' && !message.isStreaming && (
-            <a
-              href={message.sandbox_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 mt-2 px-2.5 py-1 rounded-md bg-white border border-[var(--card-border)] text-[11px] font-medium text-[var(--foreground-muted)] hover:text-primary hover:border-primary/40 transition-colors"
-            >
-              View updated sandbox →
-            </a>
+          {message.role === 'agent' && !message.isStreaming && (
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              {typeof message.version_number === 'number' && (
+                <span
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[var(--accent)]/10 border border-[var(--accent)]/30 text-[10px] font-semibold text-[var(--accent-dark)]"
+                  title="A snapshot of this version was saved automatically"
+                >
+                  Saved as v{message.version_number}
+                </span>
+              )}
+              {message.sandbox_url && (
+                <a
+                  href={message.sandbox_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-white border border-[var(--card-border)] text-[11px] font-medium text-[var(--foreground-muted)] hover:text-primary hover:border-primary/40 transition-colors"
+                >
+                  View updated sandbox →
+                </a>
+              )}
+            </div>
           )}
         </div>
       </div>

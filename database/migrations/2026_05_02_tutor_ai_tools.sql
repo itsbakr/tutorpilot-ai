@@ -93,3 +93,15 @@ insert into curriculum_standards (code, framework, grade, subject, description) 
   ('CCSS.ELA.5.RL.1', 'CCSS', '5', 'reading', 'Quote accurately from a text when explaining inferences'),
   ('NGSS.MS.PS1-1', 'NGSS', '6-8', 'science', 'Develop models to describe atomic composition of simple molecules')
 on conflict (code) do nothing;
+
+-- 7. Atomic use_count increment for saved prompts
+create or replace function increment_saved_prompt_use(prompt_id uuid)
+returns int
+language sql
+as $$
+  update tutor_saved_prompts
+  set use_count = use_count + 1,
+      last_used_at = now()
+  where id = prompt_id
+  returning use_count;
+$$;

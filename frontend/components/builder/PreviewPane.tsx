@@ -38,6 +38,8 @@ interface PreviewPaneProps {
   activityId?: string;
   studentId?: string;
   tutorId?: string;
+  supportsSessionRecording?: boolean;
+  onUpgradeRequest?: () => void;
 }
 
 const stageMeta: Record<
@@ -58,6 +60,8 @@ export function PreviewPane({
   activityId,
   studentId,
   tutorId,
+  supportsSessionRecording = true,
+  onUpgradeRequest,
 }: PreviewPaneProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -110,13 +114,32 @@ export function PreviewPane({
 
   useEffect(() => {
     if (!activeSession) return;
+    const sessionId = activeSession.id;
     const id = window.setInterval(flushEvents, 5000);
     flushTimerRef.current = id;
-    const onUnload = () => flushEvents();
-    window.addEventListener('beforeunload', onUnload);
+    // On tab close / nav-away, flush remaining events AND end the session via
+    // sendBeacon so the row gets ended_at, duration_seconds, and ai_summary.
+    const finalize = () => {
+      const remaining = eventBufferRef.current;
+      eventBufferRef.current = [];
+      if (remaining.length > 0) {
+        sessionApi.pushEventsBeacon(sessionId, remaining);
+      }
+      sessionApi.endBeacon(sessionId);
+    };
+    window.addEventListener('beforeunload', finalize);
+    window.addEventListener('pagehide', finalize);
     return () => {
       window.clearInterval(id);
-      window.removeEventListener('beforeunload', onUnload);
+      window.removeEventListener('beforeunload', finalize);
+      window.removeEventListener('pagehide', finalize);
+      // Component is unmounting (or activeSession changed) without an explicit
+      // toggle back to tutor view — finalize here too so the session is closed.
+      if (eventBufferRef.current.length > 0) {
+        sessionApi.pushEventsBeacon(sessionId, eventBufferRef.current);
+        eventBufferRef.current = [];
+      }
+      sessionApi.endBeacon(sessionId);
     };
   }, [activeSession, flushEvents]);
 
@@ -136,22 +159,22 @@ export function PreviewPane({
     return () => window.removeEventListener('message', handler);
   }, [activeSession]);
 
+  const [pendingStudentSwitch, setPendingStudentSwitch] = useState(false);
+
   // Start/stop a session when the user toggles to student view
   const handleViewChange = useCallback(
     async (next: ViewRole) => {
       if (next === view) return;
       if (next === 'student' && !activeSession && activityId) {
-        try {
-          const s = await sessionApi.start({
-            activity_id: activityId,
-            student_id: studentId,
-            tutor_id: tutorId,
-          });
-          setActiveSession(s);
-          setSessionElapsed(0);
-        } catch (err) {
-          console.error('Failed to start session', err);
+        // First time? Confirm and explain. Skip if already dismissed.
+        const skip = typeof window !== 'undefined'
+          && window.localStorage.getItem('tutorpilot:hide-student-view-intro') === '1';
+        if (!skip) {
+          setPendingStudentSwitch(true);
+          return;
         }
+        await beginStudentSession();
+        return;
       }
       if (next === 'tutor' && activeSession) {
         await flushEvents();
@@ -165,8 +188,26 @@ export function PreviewPane({
       setView(next);
       setReloadKey((k) => k + 1);
     },
-    [view, activeSession, activityId, studentId, tutorId, flushEvents]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [view, activeSession, activityId, flushEvents]
   );
+
+  const beginStudentSession = useCallback(async () => {
+    if (!activityId) return;
+    try {
+      const s = await sessionApi.start({
+        activity_id: activityId,
+        student_id: studentId,
+        tutor_id: tutorId,
+      });
+      setActiveSession(s);
+      setSessionElapsed(0);
+      setView('student');
+      setReloadKey((k) => k + 1);
+    } catch (err) {
+      console.error('Failed to start session', err);
+    }
+  }, [activityId, studentId, tutorId]);
 
   useEffect(() => {
     if (!fullscreen) return;
@@ -303,7 +344,11 @@ export function PreviewPane({
       {/* Body */}
       <div className="relative flex-1 bg-[var(--background-secondary)]">
         {tab === 'sessions' && activityId ? (
-          <SessionsAnalytics activityId={activityId} />
+          <SessionsAnalytics
+            activityId={activityId}
+            supportsSessionRecording={supportsSessionRecording}
+            onUpgradeClick={onUpgradeRequest}
+          />
         ) : (
           <>
         {/* Animated edge glow during deploy */}
@@ -334,6 +379,17 @@ export function PreviewPane({
             >
               <StopIcon className="w-3 h-3" /> End
             </button>
+          </div>
+        )}
+
+        {/* Old-activity warning when student view is on but events won't fire */}
+        {view === 'student' && sandboxUrl && !supportsSessionRecording && (
+          <div className="absolute top-12 left-2 right-2 z-30 rounded-xl border border-[var(--accent)]/30 bg-[var(--accent)]/10 px-3 py-2 text-[11px] text-[var(--accent-dark)] shadow-md backdrop-blur-sm">
+            <p className="font-semibold">No events will be recorded</p>
+            <p className="opacity-80 mt-0.5">
+              This activity was made before session recording. Ask the AI to
+              &ldquo;upgrade to support session recording&rdquo; to enable analytics.
+            </p>
           </div>
         )}
 
@@ -391,6 +447,64 @@ export function PreviewPane({
           </>
         )}
       </div>
+
+      {/* Student-view first-time confirmation */}
+      {pendingStudentSwitch && (
+        <div
+          className="fixed inset-0 z-[120] flex items-center justify-center bg-black/30 backdrop-blur-sm"
+          onClick={() => setPendingStudentSwitch(false)}
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96 }}
+            animate={{ opacity: 1, scale: 1 }}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm mx-4 rounded-2xl bg-white border border-[var(--card-border)] shadow-2xl p-5"
+          >
+            <div className="flex items-start gap-3 mb-3">
+              <div className="w-9 h-9 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0">
+                <EyeIcon className="w-5 h-5 text-primary" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-foreground">Switch to student view?</h3>
+                <p className="text-xs text-[var(--foreground-muted)] mt-1 leading-relaxed">
+                  This hides tutor-only debug controls and starts recording a session — every
+                  answer, hint, and milestone the student hits gets logged. End the session by
+                  switching back to <strong>Tutor</strong>.
+                </p>
+              </div>
+            </div>
+            <label className="flex items-center gap-2 text-xs text-[var(--foreground-muted)] mb-3 cursor-pointer">
+              <input
+                type="checkbox"
+                onChange={(e) => {
+                  if (e.target.checked && typeof window !== 'undefined') {
+                    window.localStorage.setItem('tutorpilot:hide-student-view-intro', '1');
+                  }
+                }}
+                className="w-3.5 h-3.5 rounded border-[var(--card-border)] text-primary focus:ring-primary"
+              />
+              Don&rsquo;t show this again
+            </label>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setPendingStudentSwitch(false)}
+                className="px-3 py-1.5 rounded-lg text-xs text-[var(--foreground-muted)] hover:bg-[var(--background-secondary)]"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  setPendingStudentSwitch(false);
+                  await beginStudentSession();
+                }}
+                className="px-3 py-1.5 rounded-lg bg-gradient-to-br from-primary to-primary-dark text-white text-xs font-semibold"
+              >
+                Start session
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 }

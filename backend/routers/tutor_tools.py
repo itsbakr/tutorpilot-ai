@@ -17,6 +17,7 @@ Mounted from main.py via `app.include_router(...)`.
 import asyncio
 import json
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -122,12 +123,8 @@ async def delete_saved_prompt(prompt_id: str):
 @router.post("/api/v1/tutor/saved-prompts/{prompt_id}/use")
 async def use_saved_prompt(prompt_id: str):
     sb = _supabase()
-    cur = sb.table("tutor_saved_prompts").select("use_count").eq("id", prompt_id).single().execute()
-    next_count = (cur.data or {}).get("use_count", 0) + 1
-    sb.table("tutor_saved_prompts").update({
-        "use_count": next_count,
-        "last_used_at": datetime.now(timezone.utc).isoformat(),
-    }).eq("id", prompt_id).execute()
+    res = sb.rpc("increment_saved_prompt_use", {"prompt_id": prompt_id}).execute()
+    next_count = res.data if isinstance(res.data, int) else (res.data or 0)
     return {"success": True, "use_count": next_count}
 
 
@@ -219,15 +216,38 @@ async def _summarize_session(sess: Dict[str, Any], events: List[Dict[str, Any]])
     if not events:
         return ("No interactions recorded.", [], [])
 
-    event_lines = "\n".join([
-        f"- [{e.get('ts', '')}] {e.get('kind')}: {json.dumps(e.get('payload') or {})}"
-        for e in events[:200]
-    ])
+    # Keep the head (first interactions) and the tail (final answers + completion event),
+    # which carry the most signal. Note any gap in the prompt so the model knows.
+    MAX_HEAD = 100
+    MAX_TAIL = 100
+    truncated = False
+    if len(events) > MAX_HEAD + MAX_TAIL:
+        head = events[:MAX_HEAD]
+        tail = events[-MAX_TAIL:]
+        skipped = len(events) - MAX_HEAD - MAX_TAIL
+        truncated = True
+    else:
+        head, tail, skipped = events, [], 0
+
+    def fmt(e: Dict[str, Any]) -> str:
+        return f"- [{e.get('ts', '')}] {e.get('kind')}: {json.dumps(e.get('payload') or {})}"
+
+    head_lines = "\n".join(fmt(e) for e in head)
+    tail_lines = "\n".join(fmt(e) for e in tail)
+    event_lines = head_lines
+    if truncated:
+        event_lines += f"\n... [{skipped} middle events omitted] ...\n" + tail_lines
+
+    truncation_note = (
+        f"\n(Note: {skipped} events from the middle of the session were omitted; "
+        "the first and last portions are shown above.)"
+        if truncated else ""
+    )
 
     prompt = f"""You are reviewing a student's session on an interactive tutoring activity.
 
 EVENTS (chronological):
-{event_lines}
+{event_lines}{truncation_note}
 
 Return a JSON object with these keys:
 - "summary": one short paragraph (≤80 words) describing how the session went.
@@ -441,8 +461,13 @@ Return ONLY the complete React component code in a ```jsx code block. No explana
     new_code = await call_gemini_coder(prompt, temperature=0.3, max_tokens=9000)
     if "```" in new_code:
         new_code = new_code.split("```")[1]
-        if new_code.startswith("jsx") or new_code.startswith("javascript"):
-            new_code = "\n".join(new_code.split("\n")[1:])
+        # Strip any common language fence tag (jsx/tsx/javascript/typescript/js/ts/react)
+        # left at the start of the first line.
+        new_code = re.sub(
+            r"^(jsx|tsx|javascript|typescript|js|ts|react)\b[^\n]*\n?",
+            "",
+            new_code,
+        )
 
     sandbox_url = None
     sandbox_id = None
@@ -505,14 +530,15 @@ async def generate_insights(student_id: str):
         for s in sessions
     ])
 
+    min_citations = min(2, len(sessions))
     prompt = f"""Across these recent sessions for one student, identify recurring misconceptions
-(topics that appear in 3+ sessions) and durable strengths.
+(topics that appear in 2+ sessions) and durable strengths.
 
 SESSIONS:
 {summaries}
 
 Return JSON: {{"insights": [{{"kind": "misconception"|"strength", "topic": "...", "evidence": [{{"session_id": "...", "quote": "..."}}], "recommended_action": "..."}}]}}.
-Cite at least 2 specific sessions per insight; skip patterns without evidence.
+Cite at least {min_citations} specific session(s) per insight; skip patterns without evidence.
 Reply with ONLY the JSON."""
 
     try:
@@ -551,21 +577,44 @@ async def dismiss_insight(insight_id: str):
 async def generate_recap(student_id: str, body: RecapRequest):
     sb = _supabase()
     student = sb.table("students").select("name, grade").eq("id", student_id).single().execute()
+
+    # Make to_date inclusive of the entire day: bump it to the start of the next day
+    # and use a strict less-than. Falls back to raw value if parsing fails.
+    to_exclusive = body.to_date
+    try:
+        to_dt = datetime.fromisoformat(body.to_date)
+        to_exclusive = (to_dt + timedelta(days=1)).date().isoformat()
+    except Exception:
+        pass
+
     sessions = sb.table("activity_sessions") \
         .select("ai_summary, ai_strengths, ai_misconceptions, started_at") \
         .eq("student_id", student_id) \
         .gte("started_at", body.from_date) \
-        .lte("started_at", body.to_date).execute().data or []
+        .lt("started_at", to_exclusive).execute().data or []
 
     name = (student.data or {}).get("name", "the student")
     first_name = name.split()[0] if name else "the student"
+
+    if not sessions:
+        return {
+            "subject": f"{first_name}: no recorded sessions",
+            "body": "",
+            "empty": True,
+            "message": (
+                f"There are no recorded sessions for {first_name} between "
+                f"{body.from_date} and {body.to_date}. Try widening the date range "
+                "or run a session in Student view first."
+            ),
+            "session_count": 0,
+        }
 
     summaries_text = "\n".join([
         f"- {s.get('started_at')}: {s.get('ai_summary') or 'session'}"
         + (f" · strengths={json.dumps(s.get('ai_strengths') or [])}" if s.get('ai_strengths') else "")
         + (f" · misconceptions={json.dumps(s.get('ai_misconceptions') or [])}" if s.get('ai_misconceptions') else "")
         for s in sessions
-    ]) or "No sessions in this period."
+    ])
 
     tone = "warm and personal" if body.tone == "warm" else "concise and businesslike"
 
@@ -586,7 +635,12 @@ Reply with ONLY the JSON."""
             if text.startswith("json"):
                 text = text[4:]
         obj = json.loads(text.strip())
-        return {"subject": obj.get("subject", f"{first_name}'s recap"), "body": obj.get("body", "")}
+        return {
+            "subject": obj.get("subject", f"{first_name}'s recap"),
+            "body": obj.get("body", ""),
+            "empty": False,
+            "session_count": len(sessions),
+        }
     except Exception as e:
         raise HTTPException(500, f"Recap generation failed: {str(e)[:200]}")
 
