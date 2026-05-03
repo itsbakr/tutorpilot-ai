@@ -3,7 +3,7 @@ TutorPilot FastAPI Backend - WaveHacks 2
 Self-Improving AI Tutoring Platform
 """
 
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 import json
@@ -233,7 +233,8 @@ async def trigger_reflection_analysis(agent_type: str = None):
         else:
             # Analyze all agents (use canonical agent_type names used in performance metrics)
             all_insights = {}
-            for agent in ['strategy_planner', 'lesson_creator', 'activity_creator']:
+            for agent in ['strategy_planner', 'lesson_creator', 'activity_creator',
+                          'session_assessor', 'feedback_generator']:
                 insights = await reflection_service.generate_learning_insights(
                     agent_type=agent,
                     lookback_days=7
@@ -1092,6 +1093,330 @@ async def get_activity_chat_history(activity_id: str):
             "total_messages": len(chat_history.data)
         }
         
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==========================================
+# SESSION CAPTURE + ASSESSMENT + PARENT FEEDBACK ENDPOINTS
+# ==========================================
+
+from agents.session_assessor import assess_session as run_session_assessor
+from agents.feedback_generator import generate_feedback_report as run_feedback_generator
+from services.transcription_service import SUPABASE_STORAGE_BUCKET
+
+SESSION_MEDIA_ALLOWED_MIMES = {
+    "audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav",
+    "audio/mp4", "audio/m4a", "audio/x-m4a",
+    "audio/webm", "audio/ogg", "audio/flac",
+    "video/mp4", "video/webm", "video/quicktime",
+}
+
+
+class FeedbackGenerateRequest(BaseModel):
+    student_id: str
+    tutor_id: str
+    mode: str  # "per_session" | "weekly_digest"
+    session_ids: List[str]
+    period_start: Optional[str] = None
+    period_end: Optional[str] = None
+
+
+class FeedbackReportPatch(BaseModel):
+    markdown: Optional[str] = None
+    title: Optional[str] = None
+    status: Optional[str] = None  # "draft" | "tutor_edited" | "shared"
+
+
+class MemoryProposalDecision(BaseModel):
+    decision: str  # "approved" | "rejected"
+    reviewed_by: Optional[str] = None
+
+
+@app.post("/api/v1/sessions/upload")
+async def upload_session_recording(
+    student_id: str = Form(...),
+    tutor_id: str = Form(...),
+    lesson_id: Optional[str] = Form(None),
+    occurred_at: Optional[str] = Form(None),
+    file: UploadFile = File(...),
+):
+    """Upload an audio/video recording of a tutoring session.
+
+    Stores the file in the Supabase 'session-media' bucket and creates a
+    lesson_sessions row with status='pending'. Returns the session_id; call
+    POST /api/v1/sessions/{id}/assess to start transcription + assessment.
+    """
+    try:
+        if file.content_type and file.content_type not in SESSION_MEDIA_ALLOWED_MIMES:
+            raise HTTPException(status_code=400, detail=f"Unsupported media type: {file.content_type}")
+
+        body = await file.read()
+        if not body:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+        from uuid import uuid4 as _uuid4
+        session_id = str(_uuid4())
+        ext = (file.filename or "").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "bin"
+        storage_path = f"{tutor_id}/{student_id}/{session_id}.{ext}"
+
+        # Upload to Supabase Storage (sync API → run in thread)
+        await asyncio.to_thread(
+            lambda: supabase.storage.from_(SUPABASE_STORAGE_BUCKET).upload(
+                storage_path,
+                body,
+                {"content-type": file.content_type or "application/octet-stream"},
+            )
+        )
+
+        row = {
+            "id": session_id,
+            "student_id": student_id,
+            "tutor_id": tutor_id,
+            "lesson_id": lesson_id,
+            "source": "manual_upload",
+            "media_url": storage_path,
+            "status": "pending",
+            "occurred_at": occurred_at,
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+        }
+        supabase.table("lesson_sessions").insert(row).execute()
+
+        return {"success": True, "session_id": session_id, "status": "pending"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/sessions/{session_id}/assess")
+async def trigger_session_assessment(
+    session_id: str,
+    background_tasks: BackgroundTasks,
+    force: bool = False,
+):
+    """Kick off transcription + assessment for a session in the background.
+
+    Returns immediately; the frontend should poll GET /sessions/{id} for status.
+    Passing ?force=true will re-assess a session that has already been assessed
+    (replacing the previous assessment row).
+    """
+    try:
+        # Confirm the session exists and isn't already being processed
+        existing = supabase.table("lesson_sessions") \
+            .select("id, status") \
+            .eq("id", session_id) \
+            .limit(1) \
+            .execute()
+        if not existing.data:
+            raise HTTPException(status_code=404, detail="Session not found")
+        status = existing.data[0]["status"]
+        if status in ("transcribing", "assessing"):
+            return {"success": True, "session_id": session_id, "status": status, "message": "Already in progress"}
+        if status == "assessed" and not force:
+            return {
+                "success": True,
+                "session_id": session_id,
+                "status": status,
+                "message": "Session already assessed; pass force=true to re-assess.",
+            }
+
+        async def _run():
+            try:
+                await run_session_assessor(session_id)
+            except Exception as e:
+                print(f"❌ Session assessment failed for {session_id}: {e}")
+
+        background_tasks.add_task(_run)
+        return {"success": True, "session_id": session_id, "status": "queued"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/sessions/{session_id}")
+async def get_session_detail(session_id: str):
+    """Return session row + transcript + assessment (whatever exists so far)."""
+    try:
+        sess = supabase.table("lesson_sessions").select("*").eq("id", session_id).limit(1).execute()
+        if not sess.data:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        transcript = supabase.table("session_transcripts").select("*").eq("session_id", session_id).limit(1).execute()
+        assessment = supabase.table("session_assessments").select("*").eq("session_id", session_id).order("created_at", desc=True).limit(1).execute()
+
+        return {
+            "success": True,
+            "session": sess.data[0],
+            "transcript": transcript.data[0] if transcript.data else None,
+            "assessment": assessment.data[0] if assessment.data else None,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/students/{student_id}/sessions")
+async def list_student_sessions(student_id: str):
+    """All sessions for a student, newest first, with light assessment summary."""
+    try:
+        sessions = supabase.table("lesson_sessions") \
+            .select("id, lesson_id, status, occurred_at, created_at, media_duration_seconds") \
+            .eq("student_id", student_id) \
+            .order("created_at", desc=True) \
+            .execute()
+        rows = sessions.data or []
+        if not rows:
+            return {"success": True, "sessions": []}
+
+        ids = [r["id"] for r in rows]
+        assessments = supabase.table("session_assessments") \
+            .select("session_id, overall_engagement_score, recommendations") \
+            .in_("session_id", ids) \
+            .execute()
+        a_by_session = {a["session_id"]: a for a in (assessments.data or [])}
+
+        for r in rows:
+            r["assessment"] = a_by_session.get(r["id"])
+        return {"success": True, "sessions": rows}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/agents/feedback-generator")
+async def create_feedback_report(request: FeedbackGenerateRequest):
+    """Draft a parent-facing report (per_session or weekly_digest)."""
+    try:
+        if request.mode not in ("per_session", "weekly_digest"):
+            raise HTTPException(status_code=400, detail="mode must be 'per_session' or 'weekly_digest'")
+        result = await run_feedback_generator(
+            student_id=request.student_id,
+            tutor_id=request.tutor_id,
+            mode=request.mode,
+            session_ids=request.session_ids,
+            period_start=request.period_start,
+            period_end=request.period_end,
+        )
+        return {"success": True, **result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/students/{student_id}/feedback-reports")
+async def list_feedback_reports(student_id: str):
+    """List parent reports for a student, newest first."""
+    try:
+        res = supabase.table("parent_feedback_reports") \
+            .select("*") \
+            .eq("student_id", student_id) \
+            .order("created_at", desc=True) \
+            .execute()
+        return {"success": True, "reports": res.data or []}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/api/v1/feedback-reports/{report_id}")
+async def edit_feedback_report(report_id: str, patch: FeedbackReportPatch):
+    """Tutor edits to a draft. Captures the diff in tutor_edits for the reflection loop."""
+    try:
+        existing = supabase.table("parent_feedback_reports").select("*").eq("id", report_id).limit(1).execute()
+        if not existing.data:
+            raise HTTPException(status_code=404, detail="Report not found")
+        report = existing.data[0]
+        content = dict(report.get("content") or {})
+        original_md = content.get("markdown")
+
+        if patch.markdown is not None:
+            content["markdown"] = patch.markdown
+        if patch.title is not None:
+            content["title"] = patch.title
+
+        new_status = patch.status or ("tutor_edited" if patch.markdown is not None else report.get("status"))
+
+        tutor_edits = report.get("tutor_edits") or {}
+        if patch.markdown is not None and patch.markdown != original_md:
+            tutor_edits = {
+                "original_markdown": original_md,
+                "edited_markdown": patch.markdown,
+                "edited_at": datetime.now().isoformat(),
+            }
+
+        supabase.table("parent_feedback_reports").update({
+            "content": content,
+            "status": new_status,
+            "tutor_edits": tutor_edits,
+            "updated_at": datetime.now().isoformat(),
+        }).eq("id", report_id).execute()
+
+        return {"success": True, "report_id": report_id, "status": new_status}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/students/{student_id}/memory-proposals")
+async def list_memory_proposals(student_id: str, status: str = "pending"):
+    """List staged memory proposals for a student awaiting tutor approval."""
+    try:
+        res = supabase.table("memory_proposals") \
+            .select("*") \
+            .eq("entity_type", "student") \
+            .eq("entity_id", student_id) \
+            .eq("status", status) \
+            .order("created_at", desc=True) \
+            .execute()
+        return {"success": True, "proposals": res.data or []}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/memory-proposals/{proposal_id}/decision")
+async def decide_memory_proposal(proposal_id: str, request: MemoryProposalDecision):
+    """Approve or reject a staged memory proposal. Approval writes it into platform_memory."""
+    try:
+        if request.decision not in ("approved", "rejected"):
+            raise HTTPException(status_code=400, detail="decision must be 'approved' or 'rejected'")
+
+        existing = supabase.table("memory_proposals").select("*").eq("id", proposal_id).limit(1).execute()
+        if not existing.data:
+            raise HTTPException(status_code=404, detail="Proposal not found")
+        prop = existing.data[0]
+
+        if prop.get("status") != "pending":
+            return {
+                "success": True,
+                "proposal_id": proposal_id,
+                "decision": prop["status"],
+                "message": "Proposal already reviewed; no change applied.",
+            }
+
+        if request.decision == "approved":
+            from services.memory_service import write_finding
+            await write_finding(
+                entity_type=prop["entity_type"],
+                entity_id=prop["entity_id"],
+                memory_category=prop["memory_category"],
+                memory_key=prop["memory_key"],
+                memory_value=prop["memory_value"],
+                confidence_score=float(prop.get("confidence_score") or 0.5),
+            )
+
+        supabase.table("memory_proposals").update({
+            "status": request.decision,
+            "reviewed_by": request.reviewed_by,
+            "reviewed_at": datetime.now().isoformat(),
+        }).eq("id", proposal_id).eq("status", "pending").execute()
+
+        return {"success": True, "proposal_id": proposal_id, "decision": request.decision}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

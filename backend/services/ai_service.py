@@ -6,7 +6,7 @@ Handles all AI model interactions with Weave tracing
 import os
 import httpx
 import asyncio
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from openai import AsyncOpenAI
 import weave
 import google.generativeai as genai
@@ -101,6 +101,117 @@ async def call_gemini(
             else:
                 # Non-retryable error, raise immediately
                 raise Exception(f"Gemini API error: {str(e)[:200]}")
+
+
+@weave.op()
+async def call_gemini_multimodal(
+    prompt: str,
+    audio_bytes: Optional[bytes] = None,
+    audio_mime_type: str = "audio/mp4",
+    file_uri: Optional[str] = None,
+    temperature: float = 0.4,
+    max_tokens: int = 8000,
+) -> str:
+    """
+    Call Gemini 3.0 Flash with audio (or video) input.
+
+    Two paths:
+    - Pass `audio_bytes` for files <20MB (sent as inline_data)
+    - Pass `file_uri` for files already uploaded via the Files API (large files)
+
+    Returns the raw text response. Caller is responsible for parsing JSON.
+    """
+    api_key = os.getenv("GOOGLE_LEARNLM_API_KEY") or os.getenv("GOOGLE_GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GOOGLE_GEMINI_API_KEY not set in environment")
+
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel("gemini-3-flash-preview")
+
+    generation_config = genai.GenerationConfig(
+        temperature=temperature,
+        max_output_tokens=max_tokens,
+        top_p=0.95,
+        top_k=40,
+    )
+
+    # Build the multimodal content parts
+    if file_uri:
+        # Already-uploaded Files API reference
+        media_part = {"file_data": {"mime_type": audio_mime_type, "file_uri": file_uri}}
+    elif audio_bytes is not None:
+        media_part = {"inline_data": {"mime_type": audio_mime_type, "data": audio_bytes}}
+    else:
+        raise ValueError("call_gemini_multimodal requires either audio_bytes or file_uri")
+
+    contents = [{"parts": [{"text": prompt}, media_part]}]
+
+    max_retries = 5
+    base_delay = 3
+
+    for attempt in range(max_retries):
+        try:
+            response = await asyncio.to_thread(
+                model.generate_content,
+                contents,
+                generation_config=generation_config,
+            )
+
+            if response and getattr(response, "text", None):
+                return response.text
+            raise Exception("No text in Gemini multimodal response")
+
+        except Exception as e:
+            error_str = str(e).lower()
+            is_last = attempt == max_retries - 1
+
+            if "404" in str(e) or "not found" in error_str:
+                raise Exception("Gemini model not found for multimodal call")
+
+            is_retryable = (
+                "429" in str(e)
+                or "503" in str(e)
+                or "500" in str(e)
+                or "quota" in error_str
+                or "service unavailable" in error_str
+                or "deadline exceeded" in error_str
+                or "timeout" in error_str
+            )
+
+            if is_retryable and not is_last:
+                delay = base_delay * (2 ** attempt)
+                print(f"⏳ Gemini multimodal retryable error, retrying in {delay}s... ({attempt + 1}/{max_retries})")
+                await asyncio.sleep(delay)
+                continue
+            raise Exception(f"Gemini multimodal API error: {str(e)[:200]}")
+
+
+async def upload_gemini_file(file_bytes: bytes, mime_type: str, display_name: str = "session_media") -> str:
+    """Upload a media file via the Gemini Files API and return its file URI.
+
+    Use for media >20MB. The returned URI can be passed to call_gemini_multimodal as file_uri.
+    """
+    api_key = os.getenv("GOOGLE_LEARNLM_API_KEY") or os.getenv("GOOGLE_GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GOOGLE_GEMINI_API_KEY not set in environment")
+    genai.configure(api_key=api_key)
+
+    import tempfile, os as _os
+    suffix = "." + (mime_type.split("/")[-1] if "/" in mime_type else "bin")
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    try:
+        tmp.write(file_bytes)
+        tmp.flush()
+        tmp.close()
+        uploaded = await asyncio.to_thread(
+            genai.upload_file, tmp.name, mime_type=mime_type, display_name=display_name
+        )
+        return uploaded.uri
+    finally:
+        try:
+            _os.unlink(tmp.name)
+        except Exception:
+            pass
 
 
 @weave.op()
